@@ -1,0 +1,38 @@
+## Nguồn gốc & Bản quyền (License & Origin)
+
+### 1. Nguồn gốc & Tri ân (Repository Origin & Acknowledgements)
+
+Dự án này là một phiên bản cải tiến sâu, tối ưu hóa cấu trúc và phát triển mở rộng chuyên sâu dựa trên kho lưu trữ mã nguồn:
+
+- **deepdoc_vietocr** (phát triển bởi [hoaivannguyen](https://github.com/hoaivannguyen/deepdoc_vietocr)).
+
+Hệ thống kế thừa và tích hợp các cấu phần công nghệ cốt lõi từ các dự án mã nguồn mở uy tín sau:
+
+1.  **DeepDoc / RAGFlow** (phát triển bởi [InfiniFlow](https://github.com/infiniflow/ragflow) dưới giấy phép _Apache 2.0_): Nền tảng xử lý layout, định vị bảng (table recognition) và PDF parser.
+2.  **VietOCR** (phát triển bởi tác giả [pbcquoc](https://github.com/pbcquoc/vietocr) dưới giấy phép _Apache 2.0_): Bộ thư viện và mô hình nhận diện ký tự quang học (OCR) cho ngôn ngữ tiếng Việt.
+
+_Chúng tôi bày tỏ lòng tôn trọng và sự tri ân sâu sắc đến các tác giả và cộng đồng đã phát triển các dự án gốc nêu trên._
+
+### 2. Giấy phép bản quyền & Giới hạn Phi thương mại (License & Non-Commercial Restriction)
+
+Để bảo vệ đóng góp của cộng đồng và chất xám của đội ngũ phát triển, dự án này được phát hành dưới hình thức **Giấy phép Nguồn mở Giới hạn Phi thương mại**, áp dụng cụ thể như sau:
+
+#### A. Đối với Mã nguồn (Source Code)
+
+Mã nguồn của dự án áp dụng **Giấy phép Apache 2.0 kết hợp Điều khoản bổ sung cấm thương mại (Apache License 2.0 with Commons Clause)**:
+
+- **Giữ nguyên bản quyền gốc:** Tất cả các thông tin bản quyền, tiêu đề (headers) của tác giả gốc ở đầu mỗi tệp tin mã nguồn thuộc về dự án Ragflow/DeepDoc và VietOCR phải được giữ nguyên vẹn.
+- **Quyền sửa đổi & Chia sẻ:** Bạn được quyền xem, sao chép, sửa đổi và phân phối lại mã nguồn này cho các mục đích học tập, giảng dạy, nghiên cứu học thuật hoặc sử dụng nội bộ phi lợi nhuận.
+- **CẤM THƯƠNG MẠI HÓA (Commons Clause):** **Nghiêm cấm tuyệt đối** việc sử dụng, sao chép, sửa đổi, hoặc phân phối phần mã nguồn này (bao gồm cả các phần sửa đổi dựa trên nó) cho bất kỳ mục đích thương mại nào dưới mọi hình thức. Điều này bao gồm nhưng không giới hạn ở việc: bán phần mềm, đóng gói thành sản phẩm thương mại độc quyền, hoặc sử dụng để cung cấp dịch vụ đám mây có thu phí (SaaS/API thương mại).
+
+#### B. Đối với Trọng số Mô hình (Model Weights)
+
+Tất cả các tệp trọng số mô hình (Model Weights/Checkpoints) được finetune và phát hành từ dự án này được bảo hộ nghiêm ngặt dưới giấy phép quốc tế: **Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)**.
+
+- Bạn bắt buộc phải ghi công (Attribution) dự án này và các tác giả gốc khi sử dụng mô hình.
+- Không được phép sử dụng mô hình này vào bất kỳ hoạt động thương mại hoặc tạo ra doanh thu nào.
+- Nếu bạn tiếp tục finetune hoặc cải tiến mô hình từ trọng số của chúng tôi, bạn bắt buộc phải chia sẻ kết quả dưới cùng giấy phép cấm thương mại này (ShareAlike).
+
+#### C. Tuyên bố miễn trừ trách nhiệm
+
+Trừ khi được yêu cầu bởi luật áp dụng hoặc được đồng ý bằng văn bản, phần mềm và mô hình được phân phối theo cơ sở **"CÓ SẴN (AS IS)"**, **KHÔNG CÓ BẤT KỲ BẢO ĐẢM HOẶC ĐIỀU KIỆN NÀO**, dù là rõ ràng hay ngầm định về hiệu năng hoặc độ chính xác.

@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+layouts_outputs/
+ocr_outputs/
+table_markdown_outputs/
+models/.cache/
+log/
