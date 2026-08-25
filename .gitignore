@@ -10,3 +10,4 @@ table_markdown_outputs/
 models/.cache/
 log/
 .agents/
+tasks/
