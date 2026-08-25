@@ -9,3 +9,4 @@ ocr_outputs/
 table_markdown_outputs/
 models/.cache/
 log/
+.agents/
