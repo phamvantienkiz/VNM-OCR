@@ -1,249 +1,240 @@
-# Tài liệu Kỹ thuật & Hướng dẫn Tích hợp Mô-đun OCR (ocr_modules)
+# Tài liệu Kỹ thuật & Hướng dẫn Tích hợp Mô-đun OCR & Document Extraction (FastAPI Backend)
 
-Tài liệu này cung cấp thông tin chi tiết về mặt kiến trúc, các cải tiến hiệu năng, cấu trúc API, và hướng dẫn dành cho lập trình viên để tích hợp mô-đun nhận dạng ký tự tiếng Việt (OCR) vào hệ thống số hóa tài liệu tổng thể.
-
----
-
-## 1. Tổng quan Cấu trúc Thư mục Dự án
-
-Cấu trúc phân cấp của thư mục `ocr_modules` và vị trí của các cấu phần cốt lõi được mô tả dưới đây:
-
-```
-ocr_modules/
-├── models/
-│   └── .cache/          # Thư mục cache cục bộ chứa Hugging Face & Torch Hub weights (đã được cách ly)
-├── module/              # Mã nguồn xử lý lõi của mô-đun
-│   ├── __init__.py      # Khởi tạo mô-đun, thiết lập các biến môi trường cách ly (HF_HOME, TORCH_HOME)
-│   ├── layout.py        # Xử lý nhận dạng bố cục (YOLOv10 ONNX)
-│   ├── ocr.py           # Bộ điều phối OCR phiên bản gốc (PyTorch)
-│   ├── ocr_onnx.py      # Bộ điều phối OCR tối ưu hóa (ONNX Runtime)
-│   ├── operators.py     # Lớp toán tử tiền xử lý ảnh (Resize, Chuẩn hóa, CHW Convert)
-│   ├── postprocess.py   # Lớp hậu xử lý DBPostProcess (Chuyển đổi heatmap thành bounding box)
-│   └── tsr.py           # Xử lý nhận dạng cấu trúc bảng (YOLOv10 ONNX)
-├── onnx/                # Thư mục chứa các tệp trọng số mô hình ONNX
-│   ├── cnn.onnx         # Khối trích xuất đặc trưng ảnh (CNN) của VietOCR
-│   ├── encoder.onnx     # Khối Encoder Sequence của VietOCR
-│   ├── decoder.onnx     # Khối Decoder Sequence (Autoregressive Decoder) của VietOCR
-│   ├── det.onnx         # Mô hình phát hiện dòng chữ (Text Detection - PP-OCRV5)
-│   └── layout.onnx      # Mô hình nhận diện bố cục (YOLOv10)
-├── ui/                  # Giao diện chạy thử trực quan (Visual Testing Frontend)
-│   ├── index.html       # Giao diện HTML5 thiết kế theo chuẩn Geist, tuân thủ WCAG 2.2 AA
-│   ├── style.css        # CSS tùy biến bố cục Dashboard (50/50 split-view, Sticky Footer)
-│   └── app.js           # Xử lý client-side PDF rendering (PDF.js) và chia tỷ lệ tọa độ hộp thoại
-├── vietocr/             # Cấu hình ánh xạ từ vựng và tham chiếu lớp VietOCR
-│   ├── tool/
-│   │   ├── config.py    # Quản lý cấu hình vocabulary và mô hình
-│   │   └── translate.py # Xử lý chuyển dịch token-to-text
-│   └── weight/
-│       └── config.yaml  # Tệp cấu hình siêu tham số (Hyperparameters) cho mô hình Seq2Seq/Transformer
-├── pyproject.toml       # Tệp cấu hình đặc tả dependencies của dự án
-├── requirements.txt     # Danh sách các gói phụ thuộc đã biên dịch (Lockfile)
-├── server.py            # Máy chủ API (FastAPI + Uvicorn) phục vụ Visual Testing
-├── t_ocr.py             # Script CLI chạy kiểm thử pipeline OCR
-└── t_recognizer.py      # Script CLI chạy kiểm thử Layout/TSR
-```
+Tài liệu này cung cấp thông tin chi tiết về mặt kiến trúc, các cải tiến hiệu năng, cấu trúc API, và hướng dẫn dành cho lập trình viên để tích hợp dịch vụ OCR & Document Extraction Tiếng Việt vào hệ thống số hóa tài liệu tổng thể và các pipeline RAG / Chatbot.
 
 ---
 
-## 2. Kiến trúc Hoạt động & Bản đồ Phụ thuộc (Dependency Map)
+## 1. Tổng quan Cấu trúc Thư mục Backend Chuẩn Hóa
 
-### 2.1 Luồng Xử lý Dữ liệu OCR (Data Flow Diagram)
-
-Khi một tệp tin hình ảnh được gửi vào hệ thống OCR, luồng xử lý sẽ đi qua 3 giai đoạn chính: **Phát hiện (Detection) -> Cắt & Chuẩn hóa (Crop & Normalize) -> Nhận diện (Recognition)**.
+Cấu trúc phân cấp của thư mục `backend/` theo tiêu chuẩn Clean Architecture:
 
 ```
-[Ảnh Đầu Vào]
-     │
-     ▼
-┌────────────────────────────────────────────────────────┐
-│ 1. Text Detector (PP-OCRV5 - det.onnx)                 │
-│    - Tiền xử lý: Resize (960px), Normalize, CHW        │
-│    - Chạy Inference Session trên ONNX Runtime          │
-│    - Hậu xử lý: DBPostProcess (Heatmap -> Polygons)     │
-└────┬───────────────────────────────────────────────────┘
-     │
-     ├─► [Danh sách các Bounding Boxes]
-     │
-     ▼
-┌────────────────────────────────────────────────────────┐
-│ 2. Sắp xếp & Cắt ảnh (OCR Orchestrator)                │
-│    - Sắp xếp hộp thoại từ trên xuống, trái sang phải   │
-│    - Perspective Transform cắt ảnh xoay nghiêng        │
-│    - Resize ảnh đã cắt về chiều cao chuẩn 32px         │
-└────┬───────────────────────────────────────────────────┘
-     │
-     ├─► [Mảng ảnh dòng chữ chuẩn hóa (Height 32px)]
-     │
-     ▼
-┌────────────────────────────────────────────────────────┐
-│ 3. Text Recognizer (VietOCR ONNX)                      │
-│    - CNN session: Trích xuất đặc trưng từ ảnh 32px     │
-│    - Encoder session: Mã hóa chuỗi đặc trưng          │
-│    - Decoder session: Dịch tự hồi quy (Autoregressive)  │
-│    - Bản đồ từ vựng (Vocab): Token ID -> Chữ Tiếng Việt │
-└────┬───────────────────────────────────────────────────┘
-     │
-     ▼
-[Kết quả đầu ra dạng Tuple: (Tọa độ 4 góc, Dòng chữ, Độ tin cậy)]
+backend/
+├── app/
+│   ├── api/
+│   │   ├── deps.py                      # FastAPI Dependency Injection
+│   │   └── v1/
+│   │       ├── router.py                # Tổng hợp Router v1
+│   │       └── endpoints/
+│   │           ├── health.py            # GET /api/v1/health (Liveness & Providers)
+│   │           ├── ocr.py               # POST /api/v1/ocr (Ảnh đơn)
+│   │           ├── layout.py            # POST /api/v1/layout (YOLOv10 Layout)
+│   │           ├── table.py             # POST /api/v1/table (TSR sang Markdown)
+│   │           └── document.py          # POST /api/v1/document/extract (Full RAG Pipeline)
+│   ├── core/
+│   │   ├── config.py                    # Pydantic BaseSettings
+│   │   ├── constants.py                 # Hằng số nhãn Layout, TSR, token IDs
+│   │   └── logging.py                   # Rotating File & Console Logger
+│   ├── engine/                          # [PORTABLE MODULE THUẦN ONNX]
+│   │   ├── __init__.py                  # Public exports
+│   │   ├── layout_engine.py             # YOLOv10 Document Layout Analysis (1024x1024)
+│   │   ├── manager.py                   # EngineManager Singleton & Warmup
+│   │   ├── model_loader.py              # Loader & Session Cache (Auto CPU/CUDA)
+│   │   ├── ocr_engine.py                # TextDetector (DBNet) + TextRecognizer (VietOCR)
+│   │   ├── operators.py                 # Pure NumPy/OpenCV image operators (Resize, Normalize, NMS)
+│   │   ├── postprocess.py               # DBPostProcess (Shapely, Pyclipper)
+│   │   ├── table_engine.py              # YOLOv8 Table Structure Recognition & Markdown builder
+│   │   └── vocab.py                     # Standalone VietVocab Decoder (Offset +4, No PyTorch)
+│   ├── exceptions/
+│   │   ├── custom.py                    # AppException domain classes
+│   │   └── handlers.py                  # Global FastAPI exception handlers
+│   ├── schemas/                         # Pydantic V2 I/O Models
+│   │   ├── common.py                    # Point2D, BaseResponse[T]
+│   │   ├── ocr.py                       # OCRLineResult, OCRResponse
+│   │   ├── layout.py                    # LayoutRegionResult, LayoutResponse
+│   │   ├── table.py                     # TableComponent, TableMarkdownResponse
+│   │   └── document.py                  # DocumentPageResult, DocumentExtractionResponse
+│   ├── services/                        # Business Logic Layer
+│   │   ├── ocr_service.py               # Single/batch OCR service & legacy adapter
+│   │   ├── layout_service.py            # Layout analysis orchestration
+│   │   ├── table_service.py             # TSR + OCR markdown construction
+│   │   └── document_service.py          # 7-Step Sequence Document Extraction Pipeline
+│   └── utils/
+│       ├── image_utils.py               # Safe Unicode image byte decoding & PIL transforms
+│       └── pdf_utils.py                 # PDF page rendering qua pdfplumber
+├── models/                              # 6 file trọng số ONNX
+│   ├── cnn.onnx
+│   ├── decoder.onnx
+│   ├── det.onnx
+│   ├── encoder.onnx
+│   ├── layout.onnx
+│   └── tsr.onnx
+├── tests/                               # 42 unit & integration test cases (Pytest)
+├── Dockerfile                           # Multi-stage build (~1-1.5 GB)
+├── docker-compose.yml
+├── pyproject.toml                       # Dependencies tách [cpu], [gpu], [pdf], [dev]
+└── README.md
 ```
 
-### 2.2 Bản đồ Phụ thuộc Hàm & Module (Function Dependency Map)
+---
 
-Dưới đây là sơ đồ thể hiện mối quan hệ gọi hàm giữa các tệp nguồn trong dự án:
+## 2. Kiến trúc Hoạt động & Luồng Xử lý Dữ liệu
+
+### 2.1 Luồng Xử lý Trích xuất Tài liệu Toàn diện cho RAG (`DocumentService`)
 
 ```
-t_ocr.py (CLI) OR server.py (FastAPI)
-  │
-  └──► module.ocr_onnx.OCR.__call__()  [Bộ điều phối chính]
-        │
-        ├──► module.ocr_onnx.OCR.detect()
-        │     │
-        │     └──► module.ocr_onnx.TextDetector.__call__()
-        │           │
-        │           ├──► module.ocr_onnx.transform() 
-        │           │     └──► module.operators (Resize, Normalize)
-        │           │
-        │           ├──► onnxruntime.InferenceSession.run("det.onnx")
-        │           │
-        │           └──► module.postprocess.DBPostProcess.__call__()
-        │
-        ├──► module.ocr_onnx.OCR.sorted_boxes() [Sắp xếp thứ tự đọc]
-        │
-        ├──► module.ocr_onnx.OCR.get_rotate_crop_image() [Cân chỉnh perspective]
-        │
-        └──► module.ocr_onnx.OCR.recognize_batch()
+[Client gửi file PDF / Ảnh Scan]
               │
-              └──► module.ocr_onnx.TextRecognizer.__call__()
-                    │
-                    ├──► onnxruntime.InferenceSession.run("cnn.onnx")
-                    ├──► onnxruntime.InferenceSession.run("encoder.onnx")
-                    ├──► module.ocr_onnx.translate_onnx() [Vòng lặp tự hồi quy]
-                    │     └──► onnxruntime.InferenceSession.run("decoder.onnx")
-                    │
-                    └──► vietocr.tool.config.vocab.decode() [Giải mã token ra chữ Việt]
+              ▼
+    1. Render PDF Pages (pdfplumber) ──► List[OpenCV Image]
+              │
+              ▼ (Lặp qua từng trang)
+    2. Full Page Text Detection & OCR ──► List[TextBoxes + Recognized Text]
+              │
+              ▼
+    3. Document Layout Analysis (layout.onnx) ──► List[LayoutRegion: Title, Text, Table, Figure, Eq...]
+              │
+              ▼
+    4. Layout & Text Fusion
+       - Gán layout_type cho từng TextBox
+       - Lọc bỏ vùng rác (Header/Footer lặp lại, số trang)
+       - Sắp xếp thứ tự đọc tự nhiên (Top-to-bottom, Left-to-right)
+              │
+              ▼
+    5. Xử lý Phân Nhánh Bảng Biểu vs Văn Bản Thường:
+       ├─► [Vùng Table]:
+       │     a. Crop ảnh vùng bảng
+       │     b. Run TSR (tsr.onnx) ──► Cột, Dòng, Header, Spanning Cell
+       │     c. Map tọa độ ô bảng + Text ──► Markdown Table (`| Cột 1 | Cột 2 |`)
+       │
+       └─► [Vùng Text / Title / Caption / Equation]:
+             a. Ghép dòng chữ theo đoạn văn
+             b. Định dạng Markdown: Title (`## ...`), Caption (`*...*`), Eq (`$$ ... $$`)
+              │
+              ▼
+    6. Hợp nhất (Merge) Nội dung Trang theo Tọa độ Y ──► `page_markdown`
+              │
+              ▼
+    7. Ghép nối Đa trang ──► `full_markdown` thống nhất cho RAG Text Splitters
 ```
 
 ---
 
-## 3. Phân tích Chi tiết Khối Xử lý Lõi (Core Classes & Core Dependencies)
+## 3. Danh Sách REST Endpoints (API Reference)
 
-### 3.1 Khối Phát hiện Văn bản: `TextDetector`
-*   **Mục đích**: Nhận đầu vào là ảnh màu gốc, tìm kiếm tọa độ phân vùng có chứa chữ.
-*   **Cơ chế hoạt động**:
-    1.  **Tiền xử lý (`preprocess_op`)**: Khởi tạo danh sách các toán tử từ `module/operators.py`.
-        *   `DetResizeForTest`: Đưa ảnh về kích thước tối đa 960px để giữ cân bằng tốc độ suy luận.
-        *   `NormalizeImage`: Chuẩn hóa điểm ảnh theo phân phối chuẩn Gaussian (mean, std).
-        *   `ToCHWImage`: Chuyển đổi định dạng layout mảng từ HWC (Height, Width, Channel) sang CHW.
-    2.  **Chạy Inference**: Nạp mô hình `onnx/det.onnx` thông qua hàm `load_model()`. Thực hiện suy luận để lấy bản đồ xác suất ký tự (probability heatmap).
-    3.  **Hậu xử lý (`postprocess_op`)**: Sử dụng thuật toán DBPostProcess (`module/postprocess.py`) để gom cụm các pixel có độ tin cậy > 0.3 thành các đa giác 4 góc (quadrilateral polygons).
-    4.  **Lọc nhiễu**: Lọc bỏ các bounding box có kích thước chiều ngang hoặc chiều dọc nhỏ hơn hoặc bằng 3 pixel thông qua hàm `filter_tag_det_res()`.
+### 3.1 `GET /api/v1/health`
+- **Mô tả**: Kiểm tra trạng thái liveness, model readiness và execution providers.
+- **Phản hồi**:
+  ```json
+  {
+    "status": "ok",
+    "models_ready": true,
+    "available_providers": ["CPUExecutionProvider"]
+  }
+  ```
 
-### 3.2 Khối Nhận dạng Văn bản: `TextRecognizer`
-*   **Mục đích**: Nhận đầu vào là danh sách các ảnh dòng chữ đã cắt, trả về văn bản Tiếng Việt dạng chuỗi Unicode.
-*   **Cơ chế hoạt động**:
-    1.  **Chuẩn hóa kích thước**: Đưa mọi dòng chữ đã cắt về chiều cao cố định 32px, chiều rộng thay đổi theo tỷ lệ khung hình dòng chữ thô. Chuyển đổi sang hệ màu xám/RGB chuẩn hóa trong khoảng `[0.0, 1.0]`.
-    2.  **Inference cnn & encoder**: Chạy qua `cnn.onnx` để trích xuất đặc trưng hình ảnh. Tiếp theo, chuỗi đặc trưng được đi qua `encoder.onnx` để biểu diễn dưới dạng vector ẩn (hidden states).
-    3.  **Dịch tự hồi quy (`translate_onnx`)**:
-        *   Bắt đầu với mã Token SOS (`sos_token = 1`).
-        *   Chạy vòng lặp (loop): Gửi Token trước đó và vector ẩn của encoder vào `decoder.onnx` để dự đoán xác suất Token tiếp theo thông qua hàm toán tử `torch.topk`.
-        *   Vòng lặp dừng lại khi gặp mã Token EOS (`eos_token = 2`) hoặc vượt quá độ dài tối đa cho phép (`max_seq_length = 128`).
-    4.  **Giải mã (`vocab.decode()`)**: Đối chiếu chuỗi mã Token ID nhận được với bảng từ vựng (Vocabulary Map) của `vietocr` để dịch ngược thành văn bản Unicode UTF-8 hoàn chỉnh.
+### 3.2 `POST /api/v1/document/extract` (Endpoint chính cho RAG/Chatbot)
+- **Mô tả**: Nhận file PDF đa trang hoặc file ảnh scan, trích xuất toàn bộ sang chuỗi Markdown bảo toàn bố cục và bảng biểu.
+- **Tham số**:
+  - `file` (UploadFile): File PDF hoặc ảnh.
+  - `extract_tables` (bool, default `true`): Có chạy TSR để bóc tách bảng hay không.
+  - `resolution` (int, default `150`): DPI render PDF.
+- **Phản hồi mẫu**:
+  ```json
+  {
+    "total_pages": 1,
+    "full_markdown": "## BÁO CÁO TÀI CHÍNH\n\n| TÀI SẢN | MÃ SỐ | SỐ CUỐI NĂM |\n| --- | --- | --- |\n| Tiền và tương đương tiền | 110 | 1.500.000.000 |\n\n*Ghi chú: Đơn vị tính VND*",
+    "pages": [
+      {
+        "page_number": 1,
+        "text_lines": [...],
+        "layout_regions": [...],
+        "tables_markdown": ["| TÀI SẢN | MÃ SỐ | SỐ CUỐI NĂM |\n| --- | --- | --- |\n| Tiền và tương đương tiền | 110 | 1.500.000.000 |"],
+        "page_markdown": "..."
+      }
+    ],
+    "elapsed_ms": 12450.5
+  }
+  ```
 
-### 3.3 Khối Điều phối: `OCR`
-*   **Mục đích**: Quản lý thiết bị phần cứng, chạy pipeline tuần tự và sắp xếp văn bản theo luồng đọc tự nhiên của con người.
-*   **Sắp xếp hộp văn bản (`sorted_boxes`)**:
-    *   Sắp xếp toàn bộ danh sách bounding box theo thứ tự tọa độ Y tăng dần (từ trên xuống dưới).
-    *   Nếu hai dòng chữ nằm trên cùng một dòng ngang (chênh lệch tọa độ Y nhỏ hơn 10 pixel), sắp xếp chúng theo tọa độ X tăng dần (từ trái qua phải). Điều này đảm bảo trích xuất đúng định dạng văn bản nhiều cột.
+### 3.3 `POST /api/v1/ocr`
+- **Mô tả**: Nhận diện chữ trên ảnh đơn lẻ.
+- **Phản hồi**:
+  ```json
+  {
+    "lines": [
+      {
+        "bbox": [[32, 15], [200, 15], [200, 40], [32, 40]],
+        "text": "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM",
+        "score": 0.9982
+      }
+    ],
+    "total_lines": 1,
+    "elapsed_ms": 120.5
+  }
+  ```
+
+### 3.4 `POST /api/v1/layout`
+- **Mô tả**: Phân tích các khối bố cục tài liệu (Title, Text, Table, Figure, Caption, Equation).
+
+### 3.5 `POST /api/v1/table`
+- **Mô tả**: Nhận diện cấu trúc và chuyển đổi ảnh bảng biểu sang bảng Markdown.
+
+### 3.6 `POST /api/ocr` (Legacy UI Adapter)
+- **Mô tả**: Duy trì định dạng mảng lồng `[ [bbox, [text, score]] ]` tương thích 100% cho giao diện web `/ui`.
 
 ---
 
-## 4. Các Phụ thuộc của Tệp Lõi (Core Files Dependencies)
+## 4. Hướng Dẫn Tích Hợp Vào Dự Án RAG / Chatbot
 
-Dự án duy trì các phụ thuộc cực kỳ tinh gọn để giảm thiểu xung đột thư viện:
-
-| Tệp lõi / Thư mục | Thư viện bên ngoài (External Dependencies) | Vai trò trong hệ thống |
-| :--- | :--- | :--- |
-| **`module/ocr_onnx.py`** | `onnxruntime` (hoặc `onnxruntime-gpu`), `opencv-python-headless`, `numpy`, `torch` | Tệp lõi điều phối toàn bộ luồng xử lý OCR trên ONNX Runtime. |
-| **`module/operators.py`** | `numpy`, `opencv-python-headless` | Cung cấp các phép toán xử lý ảnh số trực tiếp trên mảng NumPy. |
-| **`module/postprocess.py`** | `shapely`, `pyclipper`, `numpy` | Thực hiện các phép toán hình học đa giác để khoanh vùng chữ. |
-| **`vietocr/`** | `vietocr` (được cài đặt qua pip) | Cung cấp logic giải mã từ vựng (`vietocr.tool`). |
-| **`server.py`** | `fastapi`, `uvicorn`, `python-multipart` | Khởi chạy máy chủ API để phục vụ frontend. |
-
----
-
-## 5. Hướng dẫn Tích hợp Code (Developer Guide)
-
-### 5.1 Sử dụng trực tiếp trong mã nguồn Python (Python API)
-Lập trình viên có thể import lớp `OCR` từ gói `module.ocr_onnx` để chạy trích xuất ký tự:
+### Cách 1: Sử dụng như một Microservice độc lập qua REST API
 
 ```python
-import os
-import sys
-import cv2
-import numpy as np
+import httpx
+from langchain_core.documents import Document
+from langchain_text_splitters import MarkdownHeaderTextSplitter
 
-# Đảm bảo đường dẫn import trỏ đúng vào thư mục ocr_modules
-sys.path.insert(0, "/path/to/ocr_modules")
+def extract_pdf_for_rag(pdf_path: str) -> list[Document]:
+    # 1. Gửi file PDF đến OCR Service
+    with open(pdf_path, "rb") as f:
+        response = httpx.post(
+            "http://localhost:8000/api/v1/document/extract",
+            files={"file": (pdf_path, f, "application/pdf")},
+            params={"extract_tables": "true"},
+            timeout=120.0,
+        )
+        response.raise_for_status()
+        data = response.json()
 
-from module.ocr_onnx import OCR
+    # 2. Tạo Document từ full_markdown
+    full_md = data["full_markdown"]
+    raw_doc = Document(page_content=full_md, metadata={"source": pdf_path, "pages": data["total_pages"]})
 
-# 1. Khởi tạo thực thể OCR (Nạp các mô hình ONNX vào RAM)
-ocr_engine = OCR()
-
-# 2. Đọc ảnh đầu vào bằng giải pháp tương thích Unicode
-img_path = "path/to/tài_liệu_của_bạn.jpg"
-img = cv2.imdecode(np.fromfile(img_path, dtype=np.uint8), cv2.IMREAD_COLOR)
-
-if img is not None:
-    # 3. Chạy suy luận OCR
-    # Kết quả trả về là một danh sách các phần tử chứa tọa độ hộp và văn bản tương ứng
-    results = ocr_engine(img)
-    
-    for box, (text, score) in results:
-        print(f"Tọa độ hộp thoại: {box}")
-        print(f"Văn bản trích xuất: '{text}' (Độ tin cậy: {score:.2f})")
-        print("-" * 30)
-```
-
-### 5.2 Giải thích định dạng dữ liệu đầu ra (Output Schema)
-Kết quả trả về của hàm gọi mô hình `results = ocr_engine(img)` là một danh sách các Tuple:
-`List[Tuple[List[List[int]], Tuple[str, float]]]`
-
-Chi tiết phân cấp:
-```json
-[
-  [
-    [[x1, y1], [x2, y2], [x3, y3], [x4, y4]], // Tọa độ 4 góc của bounding box (dạng mảng số nguyên)
-    ["Nội dung dòng văn bản nhận dạng được", 0.9854] // Văn bản Unicode UTF-8 và xác suất tin cậy (0.0 -> 1.0)
-  ],
-  ...
-]
+    # 3. Tiến hành chunking theo Header Markdown để giữ nguyên ngữ cảnh bảng biểu và đoạn văn
+    headers_to_split_on = [
+        ("#", "Header 1"),
+        ("##", "Header 2"),
+        ("###", "Header 3"),
+    ]
+    markdown_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on)
+    chunks = markdown_splitter.split_text(raw_doc.page_content)
+    return chunks
 ```
 
 ---
 
-## 6. Máy chủ API & Giao diện Chạy thử (FastAPI & Web UI)
+### Cách 2: Copy-Paste Module Trực Tiếp (In-Process Library)
 
-Dự án cung cấp sẵn một máy chủ FastAPI nhẹ để hỗ trợ việc chạy thử nghiệm trực quan qua giao diện đồ họa.
+1. **Copy các thư mục sau vào dự án mới**:
+   - `backend/app/engine/` -> Đặt vào thư mục engine trong dự án mới.
+   - `backend/models/*.onnx` -> Đặt vào thư mục `models/` trong dự án mới.
+2. **Cài đặt thư viện tối giản**:
+   ```bash
+   # CPU:
+   pip install onnxruntime opencv-python-headless numpy pillow pdfplumber shapely pyclipper
+   # GPU:
+   pip install onnxruntime-gpu opencv-python-headless numpy pillow pdfplumber shapely pyclipper
+   ```
+3. **Thực thi trực tiếp**:
+   ```python
+   from app.engine import EngineManager
+   from app.services.document_service import DocumentService
 
-### 6.1 Tài liệu API Điểm cuối (API Endpoints)
-#### **`POST /api/ocr`**
-*   **Mô tả**: Nhận diện ký tự từ tệp ảnh tải lên.
-*   **Định dạng yêu cầu (Request Format)**: `multipart/form-data`
-    *   Tham số: `file` (dạng Binary File - JPG, PNG, WEBP, BMP, v.v.)
-*   **Định dạng phản hồi (Response Format)**: `JSON`
-    *   Mẫu dữ liệu trả về thành công:
-        ```json
-        [
-          [[[32, 15], [200, 15], [200, 40], [32, 40]], ["CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM", 0.9982]],
-          [[[32, 45], [150, 45], [150, 65], [32, 65]], ["Độc lập - Tự do - Hạnh phúc", 0.9915]]
-        ]
-        ```
+   manager = EngineManager(models_dir="./models", device="auto")
+   manager.initialize()
 
-### 6.2 Khởi chạy Server
-Lập trình viên có thể khởi chạy server demo cục bộ thông qua lệnh:
-```powershell
-.\.venv\Scripts\python.exe server.py
-```
-*   Máy chủ API và giao diện Web tĩnh sẽ được host tại địa chỉ: **`http://127.0.0.1:8000/`**
-*   Giao diện hỗ trợ kéo thả trực tiếp tệp PDF/ảnh, tự động phân tích và hiển thị kết quả song song trực quan 50/50, cho phép di chuột (hover) trên ảnh gốc để xem nội dung hộp văn bản tương ứng.
+   doc_service = DocumentService(manager)
+   with open("data/sample.pdf", "rb") as f:
+       res = doc_service.extract_document(f.read())
+   print(res.full_markdown)
+   ```
