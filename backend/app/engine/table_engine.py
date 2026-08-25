@@ -1,4 +1,4 @@
-"""Table Structure Recognition Engine (TSR) using YOLOv10 ONNX.
+"""Table Structure Recognition Engine (TSR) using YOLOv8 ONNX.
 
 Extracts table grid structure (rows, columns, headers, spanning cells)
 and reconstructs structured tables into Markdown.
@@ -16,7 +16,7 @@ from app.engine.operators import nms
 
 
 class TableEngine:
-    """Table Structure Recognition and Markdown Table Builder."""
+    """Table Structure Recognition and Markdown Table Builder using YOLOv8."""
 
     def __init__(
         self,
@@ -29,14 +29,14 @@ class TableEngine:
         self.input_name = self.session.get_inputs()[0].name
         self.input_shape = self.session.get_inputs()[0].shape[2:4]
         if None in self.input_shape or self.input_shape[0] <= 0:
-            self.target_shape = (1024, 1024)
+            self.target_shape = (640, 640)
         else:
             self.target_shape = (int(self.input_shape[0]), int(self.input_shape[1]))
 
         self.labels = labels or TSR_LABELS
 
     def preprocess_image(self, img: np.ndarray) -> tuple[np.ndarray, list[float]]:
-        """Preprocess cropped table image with letterbox resize, border padding, and CHW normalization."""
+        """Preprocess cropped table image with letterbox resize, border padding (114), and CHW normalization."""
         src_h, src_w = img.shape[:2]
         target_h, target_w = self.target_shape
 
@@ -71,50 +71,77 @@ class TableEngine:
     def postprocess_outputs(
         self, outputs: np.ndarray, scale_factor: list[float], thr: float = DEFAULT_TSR_THRESHOLD
     ) -> list[dict[str, Any]]:
-        """Filter YOLOv10 TSR outputs, scale back to table image dimensions, and apply NMS."""
-        boxes = np.squeeze(outputs)
-        if boxes.ndim != 2 or len(boxes) == 0:
+        """Process YOLOv8 TSR outputs: transpose (8400, 11), convert xywh -> xyxy, unpad, and run NMS."""
+        raw = np.squeeze(outputs)
+        if raw.ndim != 2:
             return []
 
-        scores = boxes[:, 4]
-        valid_mask = scores > max(thr, 0.08)
-        boxes = boxes[valid_mask, :]
-        scores = scores[valid_mask]
+        # YOLOv8 format: (11, 8400) -> transpose to (8400, 11)
+        if raw.shape[0] < raw.shape[1]:
+            boxes_all = raw.T
+        else:
+            boxes_all = raw
 
-        if len(boxes) == 0:
+        # boxes_all format: [cx, cy, w, h, class_0_score, class_1_score, ...]
+        coords_xywh = boxes_all[:, :4]
+        class_scores = boxes_all[:, 4:]
+
+        max_scores = np.max(class_scores, axis=1)
+        valid_mask = max_scores > max(thr, 0.05)
+
+        if not np.any(valid_mask):
             return []
 
-        class_ids = boxes[:, -1].astype(int)
-        coords = boxes[:, :4].copy()
+        coords_xywh = coords_xywh[valid_mask]
+        class_scores = class_scores[valid_mask]
+        max_scores = max_scores[valid_mask]
+        class_ids = np.argmax(class_scores, axis=1)
+
+        # Convert xywh to xyxy
+        cx = coords_xywh[:, 0]
+        cy = coords_xywh[:, 1]
+        w = coords_xywh[:, 2]
+        h = coords_xywh[:, 3]
+
+        x1 = cx - w / 2.0
+        y1 = cy - h / 2.0
+        x2 = cx + w / 2.0
+        y2 = cy + h / 2.0
 
         # Reverse padding
-        coords[:, 0] -= scale_factor[2]
-        coords[:, 2] -= scale_factor[2]
-        coords[:, 1] -= scale_factor[3]
-        coords[:, 3] -= scale_factor[3]
+        x1 -= scale_factor[2]
+        x2 -= scale_factor[2]
+        y1 -= scale_factor[3]
+        y2 -= scale_factor[3]
 
         # Reverse scaling
         scale_w, scale_h = scale_factor[0], scale_factor[1]
-        coords[:, [0, 2]] *= scale_w
-        coords[:, [1, 3]] *= scale_h
+        x1 *= scale_w
+        x2 *= scale_w
+        y1 *= scale_h
+        y2 *= scale_h
 
+        boxes_xyxy = np.stack([x1, y1, x2, y2], axis=1)
+
+        # Class-wise NMS
         unique_classes = np.unique(class_ids)
         keep_indices = []
         for cid in unique_classes:
             c_mask = np.where(class_ids == cid)[0]
-            c_boxes = coords[c_mask]
-            c_scores = scores[c_mask]
-            c_keep = nms(c_boxes, c_scores, 0.45)
+            c_boxes = boxes_xyxy[c_mask]
+            c_scores = max_scores[c_mask]
+            c_keep = nms(c_boxes, c_scores, 0.3)
             keep_indices.extend(c_mask[c_keep])
 
         results = []
         for i in keep_indices:
             cid = class_ids[i]
             label_name = self.labels[cid] if cid < len(self.labels) else "table row"
+            score_val = float(np.clip(max_scores[i], 0.0, 1.0))
             results.append({
                 "type": label_name.lower(),
-                "bbox": [float(c) for c in coords[i].tolist()],
-                "score": float(scores[i]),
+                "bbox": [float(c) for c in boxes_xyxy[i].tolist()],
+                "score": score_val,
             })
 
         return results
@@ -147,7 +174,6 @@ class TableEngine:
         """
         rows = [c for c in table_components if "row" in c["type"] and "header" not in c["type"]]
         columns = [c for c in table_components if "column" in c["type"] and "header" not in c["type"]]
-        headers = [c for c in table_components if "header" in c["type"]]
 
         # Sort rows top-to-bottom, columns left-to-right
         rows.sort(key=lambda r: r["bbox"][1])
@@ -182,7 +208,6 @@ class TableEngine:
 
                 for row in line_groups[1:]:
                     cells = [b["text"].strip().replace("|", "\\|") for b in row]
-                    # Pad cells to match header length if needed
                     while len(cells) < len(header_cells):
                         cells.append("")
                     md_lines.append("| " + " | ".join(cells[:len(header_cells)]) + " |")
