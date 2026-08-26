@@ -632,8 +632,9 @@ function processApiResponseData(data, elapsedMs) {
     let fullMarkdown = '';
 
     if (AppState.config.endpoint === '/api/v1/ocr') {
-        // OcrResponse: { text_lines: [{ text, score, bbox }] }
-        textLines = (data.text_lines || []).map((line, idx) => ({
+        // OCRResponse: { lines: [{ text, score, bbox }], total_lines, elapsed_ms }
+        const rawLines = data.lines || data.text_lines || [];
+        textLines = rawLines.map((line, idx) => ({
             id: idx,
             text: line.text || '',
             score: line.score || 0,
@@ -642,12 +643,13 @@ function processApiResponseData(data, elapsedMs) {
         }));
         fullMarkdown = textLines.map(l => l.text).join('\n');
     } else {
-        // DocumentResponse: { full_markdown, pages: [{ page_num, full_markdown, text_lines }] }
+        // DocumentExtractionResponse: { full_markdown, pages: [{ page_number, page_markdown, text_lines }] }
         const pages = data.pages || [];
-        const currentPageData = pages.find(p => p.page_num === AppState.file.currentPage) || pages[0] || {};
+        const currentPageData = pages.find(p => (p.page_number || p.page_num) === AppState.file.currentPage) || pages[0] || {};
 
-        fullMarkdown = data.full_markdown || currentPageData.full_markdown || '';
-        textLines = (currentPageData.text_lines || []).map((line, idx) => ({
+        fullMarkdown = data.full_markdown || currentPageData.page_markdown || currentPageData.full_markdown || '';
+        const rawLines = currentPageData.text_lines || currentPageData.lines || [];
+        textLines = rawLines.map((line, idx) => ({
             id: idx,
             text: line.text || '',
             score: line.score || 0,
