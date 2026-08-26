@@ -157,3 +157,63 @@ def test_css_grid_and_design_tokens(ui_css_content: str) -> None:
     assert "--slate-900:" in ui_css_content
     assert "@media (max-width: 1279.98px)" in ui_css_content
     assert "@media (max-width: 767.98px)" in ui_css_content
+
+
+def test_js_modules_static_serving() -> None:
+    """Test that all modular JS files exist and are served via FastAPI static mount."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    client = TestClient(app, raise_server_exceptions=False)
+
+    js_files = [
+        "js/state.js",
+        "js/api.js",
+        "js/pdf-loader.js",
+        "js/bbox-renderer.js",
+        "js/app.js",
+    ]
+
+    for js_file in js_files:
+        res = client.get(f"/ui/{js_file}")
+        assert res.status_code == 200, f"Failed to serve /ui/{js_file}"
+        assert len(res.text) > 0, f"/ui/{js_file} is empty"
+
+
+def test_js_modules_content_and_exports() -> None:
+    """Test that JS modules export the required functions defined in Phase 2 P3 plan."""
+    ui_dir = Path(__file__).resolve().parents[3] / "ui" / "js"
+
+    # 1. state.js
+    state_js = (ui_dir / "state.js").read_text(encoding="utf-8")
+    assert "export const AppState" in state_js
+    assert "export const EventBus" in state_js
+    assert "export function updateFilteredLinesAndMetrics" in state_js
+    assert "export function buildPageCacheKey" in state_js
+
+    # 2. api.js
+    api_js = (ui_dir / "api.js").read_text(encoding="utf-8")
+    assert "export async function checkHealth" in api_js
+    assert "export async function startHealthPolling" in api_js
+    assert "export function stopHealthPolling" in api_js
+    assert "export function abortCurrentRequest" in api_js
+    assert "export async function sendOcrRequest" in api_js
+    assert "export async function sendDocumentRequest" in api_js
+    assert "export function sanitizeHtml" in api_js
+
+    # 3. pdf-loader.js
+    pdf_js = (ui_dir / "pdf-loader.js").read_text(encoding="utf-8")
+    assert "export function dpiToScale" in pdf_js
+    assert "export async function loadPdfDocument" in pdf_js
+    assert "export async function renderPdfPageToCanvas" in pdf_js
+    assert "export async function exportPdfPageToBlob" in pdf_js
+    assert "export async function renderPdfThumbnail" in pdf_js
+    assert "export function evictDistantPages" in pdf_js
+
+    # 4. bbox-renderer.js
+    bbox_js = (ui_dir / "bbox-renderer.js").read_text(encoding="utf-8")
+    assert "export function normalizeBbox" in bbox_js
+    assert "export function renderBoundingBoxes" in bbox_js
+    assert "export function highlightBbox" in bbox_js
+    assert "export function clearBboxHighlight" in bbox_js
+    assert "export function clearBboxOverlay" in bbox_js
