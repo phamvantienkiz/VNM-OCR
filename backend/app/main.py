@@ -90,7 +90,7 @@ async def legacy_ocr_endpoint(
 
 
 # Static UI Mount (if ui directory exists)
-ui_path = Path(__file__).resolve().parents[2].parent / "ui"
+ui_path = Path(__file__).resolve().parents[2] / "ui"
 if ui_path.is_dir():
     app.mount("/ui", StaticFiles(directory=str(ui_path), html=True), name="ui")
 
