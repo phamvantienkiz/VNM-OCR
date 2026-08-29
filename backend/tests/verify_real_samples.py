@@ -26,8 +26,14 @@ def main():
     mgr.initialize()
     doc_service = DocumentService(mgr)
 
-    sample_files = list(img_dir.glob("*.png")) + list(img_dir.glob("*.jpg")) + list(img_dir.glob("*.webp"))
-    print(f"Found {len(sample_files)} sample file(s) in {img_dir}\n")
+    pdf_dir = Path(__file__).resolve().parent / "real_pdf_file"
+    sample_files = (
+        list(img_dir.glob("*.png"))
+        + list(img_dir.glob("*.jpg"))
+        + list(img_dir.glob("*.webp"))
+        + list(pdf_dir.glob("*.pdf"))
+    )
+    print(f"Found {len(sample_files)} sample file(s) across {img_dir} and {pdf_dir}\n")
 
     for fpath in sample_files:
         print(f"--> Processing: {fpath.name}")

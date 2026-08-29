@@ -28,3 +28,20 @@ def sample_image_bytes() -> bytes:
 
     with open(images[0], "rb") as f:
         return f.read()
+
+
+@pytest.fixture
+def real_pdf_path() -> Path:
+    """Fixture providing Path to the real scanned administrative PDF sample."""
+    pdf_dir = Path(__file__).resolve().parent / "real_pdf_file"
+    pdf_files = list(pdf_dir.glob("*.pdf"))
+    if not pdf_files:
+        pytest.skip("No sample PDF files found in backend/tests/real_pdf_file")
+    return pdf_files[0]
+
+
+@pytest.fixture
+def real_pdf_bytes(real_pdf_path: Path) -> bytes:
+    """Fixture providing raw bytes of real scanned administrative PDF sample."""
+    return real_pdf_path.read_bytes()
+
