@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import Any
 import onnxruntime as ort
 
+import platform
+import sys
+
 logger = logging.getLogger(__name__)
 
 # Global cache for loaded (session, run_options) tuples
@@ -52,13 +55,37 @@ def get_preferred_providers(
     return providers, provider_options, shrink_tag
 
 
-def create_session_options() -> ort.SessionOptions:
-    """Create optimized SessionOptions for low memory and bounded thread count."""
+def create_session_options(model_path: Path | None = None) -> ort.SessionOptions:
+    """Create optimized SessionOptions for low memory, bounded thread count, and graph caching.
+
+    Args:
+        model_path: Optional path to the model file for graph optimization cache discovery.
+
+    Returns:
+        Configured ort.SessionOptions instance.
+    """
     options = ort.SessionOptions()
     options.enable_cpu_mem_arena = False
     options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
     options.intra_op_num_threads = 2
-    options.inter_op_num_threads = 2
+    options.inter_op_num_threads = 1
+    options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+
+    if model_path and model_path.exists():
+        try:
+            cache_dir = model_path.parent / ".onnx_opt_cache"
+            cache_dir.mkdir(exist_ok=True)
+
+            arch_tag = f"{sys.platform}_{platform.machine()}"
+            stat_result = model_path.stat()
+            model_tag = f"{stat_result.st_size}_{int(stat_result.st_mtime)}"
+            cache_name = f"{model_path.stem}_{arch_tag}_{model_tag}_opt.onnx"
+            options.optimized_model_filepath = str(cache_dir / cache_name)
+        except PermissionError as e:
+            logger.debug("Read-only filesystem detected, skipping ONNX graph disk cache: %s", e)
+        except Exception as e:
+            logger.warning("Failed to configure ONNX graph cache for %s: %s", model_path.name, e)
+
     return options
 
 
@@ -93,7 +120,7 @@ def load_onnx_session(
         return _LOADED_SESSIONS[cache_key]
 
     providers, provider_options, shrink_tag = get_preferred_providers(device, device_id)
-    session_options = create_session_options()
+    session_options = create_session_options(model_path=path_obj)
 
     session = ort.InferenceSession(
         str(path_obj),

@@ -1,5 +1,20 @@
 """FastAPI Application Entry Point."""
 
+# Khóa cứng ngân sách luồng tính toán CPU đa nền tảng ngay từ đầu tiến trình
+import os
+import sys
+
+os.environ["OMP_NUM_THREADS"] = "2"
+os.environ["MKL_NUM_THREADS"] = "2"
+os.environ["OPENBLAS_NUM_THREADS"] = "2"
+os.environ["NUMEXPR_NUM_THREADS"] = "2"
+
+if sys.platform == "darwin":
+    os.environ["VECLIB_MAXIMUM_THREADS"] = "2"
+
+import cv2
+cv2.setNumThreads(2)
+
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncGenerator

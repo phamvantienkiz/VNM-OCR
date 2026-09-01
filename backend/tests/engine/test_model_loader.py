@@ -49,3 +49,30 @@ def test_load_onnx_session_file_not_found():
 def test_clear_session_cache():
     clear_session_cache()
     # Cache should be empty without error
+
+
+def test_create_session_options_defaults():
+    from app.engine.model_loader import create_session_options
+    import onnxruntime as ort
+
+    opts = create_session_options()
+    assert opts.enable_cpu_mem_arena is False
+    assert opts.execution_mode == ort.ExecutionMode.ORT_SEQUENTIAL
+    assert opts.intra_op_num_threads == 2
+    assert opts.inter_op_num_threads == 1
+    assert opts.graph_optimization_level == ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+
+
+def test_create_session_options_with_model_path():
+    from app.engine.model_loader import create_session_options
+
+    models_dir = Path(__file__).resolve().parents[2] / "models"
+    det_model = models_dir / "det.onnx"
+    if not det_model.exists():
+        pytest.skip("det.onnx not found for test")
+
+    opts = create_session_options(model_path=det_model)
+    assert opts.optimized_model_filepath != ""
+    assert ".onnx_opt_cache" in opts.optimized_model_filepath
+    assert "det_" in opts.optimized_model_filepath
+
