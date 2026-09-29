@@ -1,9 +1,17 @@
 """FastAPI Application Entry Point."""
 
-# Khóa cứng ngân sách luồng tính toán CPU đa nền tảng ngay từ đầu tiến trình
+# 1. Quản lý File Tạm (Sandboxing) — Tránh làm rác ổ C: trên Windows hoặc /tmp trên Linux (Issue #53)
 import os
 import sys
+import tempfile
+from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+TEMP_DIR = PROJECT_ROOT / "temp"
+TEMP_DIR.mkdir(exist_ok=True)
+tempfile.tempdir = str(TEMP_DIR)
+
+# 2. Khóa cứng ngân sách luồng tính toán CPU đa nền tảng ngay từ đầu tiến trình
 os.environ["OMP_NUM_THREADS"] = "2"
 os.environ["MKL_NUM_THREADS"] = "2"
 os.environ["OPENBLAS_NUM_THREADS"] = "2"

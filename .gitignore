@@ -11,3 +11,7 @@ models/.cache/
 log/
 .agents/
 tasks/
+temp/
+backend/temp/
+.onnx_opt_cache/
+*.onnx_opt_cache/
