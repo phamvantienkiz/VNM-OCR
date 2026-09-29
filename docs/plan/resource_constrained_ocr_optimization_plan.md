@@ -1,11 +1,11 @@
 # Kế Hoạch Tối Ưu Hóa Tài Nguyên Cho Module OCR Nhúng RAG / Agent (1 Worker, 2 Threads, $\le$ 2GB RAM & Tự Động Thu Hồi)
 
 > **Mã tài liệu:** `DOC-PLAN-OCR-002`  
-> **Ngày cập nhật:** 01/09/2026  
-> **Phiên bản:** `4.3.0` (FastAPI Lifecycle Hardened: Early Stream Guard Middleware, Direct File-Like Streaming & Zero-Copy Spool)  
+> **Ngày cập nhật:** 02/09/2026  
+> **Phiên bản:** `4.5.0` (Clean Router Separation, Gitignore Temp Sandboxing & Production Hardened per Round 11)  
 > **Tài liệu căn cứ:**  
-> - [`DOC-REPORT-HW-001 v3.3.0`](file:///E:/MyProject/VNM-OCR/docs/report/hardware_optimization_and_api_architecture.md) — Báo cáo hiện trạng phần cứng  
-> - [`DOC-REP-COUNTER-003 v8.0.0`](file:///E:/MyProject/VNM-OCR/docs/report/counter_argument_review.md) — Phân tích phản biện & đánh giá cải thiện (Vòng 1 đến Vòng 8)  
+> - [`DOC-REPORT-HW-001 v3.5.0`](file:///E:/MyProject/VNM-OCR/docs/report/hardware_optimization_and_api_architecture.md) — Báo cáo hiện trạng phần cứng  
+> - [`DOC-REP-COUNTER-003 v11.0.0`](file:///E:/MyProject/VNM-OCR/docs/report/counter_argument_review.md) — Phân tích phản biện & đánh giá cải thiện (Vòng 1 đến Vòng 11)  
 > **Áp dụng cho:** Toàn bộ hệ thống OCR & Document Extraction tại [`backend/`](file:///E:/MyProject/VNM-OCR/backend)  
 > **Nền tảng mục tiêu:** Tương thích đa nền tảng (Linux, Windows, macOS / Apple Silicon & Intel)  
 
@@ -26,6 +26,8 @@ Khi được tích hợp vào các hệ sinh thái RAG (Retrieval-Augmented Gene
 │                                │ tức (t + 2s) sau khi kết thúc request          │
 │ 5. Độ chính xác Tiếng Việt     │ BẢO TOÀN 100% độ chính xác mô hình FP32 gốc     │
 │ 6. Tương thích môi trường      │ Chạy mượt mà trên Linux (Docker), Windows, macOS│
+│ 7. Quản lý File Tạm & Gitignore│ Ép 100% temp vào repo/temp và ignore trên Git   │
+│ 8. Chuẩn mực Clean Architecture│ main.py không chứa bất kỳ endpoint nào          │
 └────────────────────────────────┴────────────────────────────────────────────────┘
 ```
 
@@ -36,7 +38,7 @@ Khi được tích hợp vào các hệ sinh thái RAG (Retrieval-Augmented Gene
 ```mermaid
 flowchart TD
     subgraph ClientAgent [RAG / Multi-Agent System]
-        Req[POST /api/v1/document/extract hoặc /api/ocr\nUpload PDF / Image File]
+        Req[POST /api/v1/document/extract hoặc /api/v1/ocr\nUpload PDF / Image File]
     end
 
     subgraph SecurityGuard [Early ASGI Middleware & Lifecycle Guard Layer]
@@ -49,7 +51,7 @@ flowchart TD
         ChunkExceed{Chunked Bytes > 50MB?}
         AbortStream[Abort Connection: HTTP 413\nChặn đứng Disk Exhaustion DoS]
         
-        FastAPISpool[FastAPI SpooledTemporaryFile\nFile Object trên đĩa/RAM nhỏ]
+        FastAPISpool[FastAPI SpooledTemporaryFile\nSandboxed trong backend/temp/ không rác OS & Gitignored]
     end
 
     subgraph ConcurrencyControl [CPU Inference Concurrency Control]
@@ -108,31 +110,61 @@ flowchart TD
 
 ---
 
-### TRỤ CỘT 1: ĐIỀU PHỐI CONCURRENCY, ASGI STREAMING GUARD MIDDLEWARE & DIRECT FILE-LIKE STREAMING
+### TRỤ CỘT 1: ĐIỀU PHỐI CONCURRENCY, ASGI STREAMING GUARD, SANDBOXING FILE TẠM & ROUTER CHUẨN MỰC
 
-#### 1. Vấn đề giải quyết & Điểm hoàn thiện (Review V1 đến V8):
-- **Hiểu Đúng Vòng Đời FastAPI (FastAPI Request Lifecycle — Vá Lỗi #49 & #50)**:
-  - *Sự thật về `File(...)`*: Trong FastAPI/Starlette, khi một route khai báo `file: UploadFile = File(...)`, framework sẽ **tiêu thụ toàn bộ request body qua mạng và ghi xuống file tạm `SpooledTemporaryFile` (trên disk/RAM spool) TRƯỚC KHI** hàm endpoint được thực thi.
-  - *Nguy cơ Disk Exhaustion DoS (#50)*: Nếu chỉ kiểm tra kích thước hoặc timeout trong endpoint, một kẻ tấn công gửi 100GB qua `Transfer-Encoding: chunked` sẽ khiến FastAPI ghi tràn ổ cứng (`/tmp`) làm sập OS trước khi code của endpoint kịp chạy.
-  - *Giải pháp*: Can thiệp trực tiếp ở tầng **ASGI Middleware (`StreamingUploadGuardMiddleware`)**:
+#### 1. Vấn đề giải quyết & Điểm hoàn thiện (Review V1 đến V11):
+- **Khống Chế File Tạm & Khai Báo Gitignore (Vá Lỗi #53 & #56 - Vòng 10 & 11)**:
+  - *Nguy cơ OS Pollution & Git Bloat*: FastAPI dùng `SpooledTemporaryFile` ghi file vào temp OS (`%TEMP%` trên Windows, `/tmp` trên Linux).
+  - *Giải pháp*: Ép buộc `tempfile.tempdir = str(PROJECT_ROOT / "temp")` ngay dòng đầu `main.py`. Đồng thời khai báo rõ `temp/`, `backend/temp/`, `.onnx_opt_cache/` trong `.gitignore` để ngăn chặn developer commit nhầm file rác.
+- **Tiêu Chuẩn Hóa Lớp Middleware & Tách Biệt Router Tuyệt Đối (Vá Lỗi #54 & #55 - Vòng 10 & 11)**:
+  - *Vi phạm Clean Architecture*: Nhồi nhét `StreamingUploadGuardMiddleware` hoặc viết trực tiếp `@app.post("/api/ocr")` vào `main.py` vi phạm chuẩn của skill `fastapi-backend-scaffold`.
+  - *Giải pháp*: 
+    1. Tách middleware vào [`backend/app/middlewares/upload_guard.py`](file:///E:/MyProject/VNM-OCR/backend/app/middlewares/upload_guard.py) và đăng ký qua [`backend/app/middlewares/__init__.py`](file:///E:/MyProject/VNM-OCR/backend/app/middlewares/__init__.py).
+    2. Di dời toàn bộ logic OCR (gồm cả OCR v1 và Legacy format) vào [`backend/app/api/v1/endpoints/ocr.py`](file:///E:/MyProject/VNM-OCR/backend/app/api/v1/endpoints/ocr.py). File `main.py` chỉ làm nhiệm vụ kết nối và không chứa bất kỳ logic route nào.
+- **Hiểu Đúng Vòng Đời FastAPI & Chống Disk Exhaustion DoS (Vá Lỗi #49 & #50)**:
+  - Can thiệp trực tiếp ở tầng ASGI Middleware:
     1. **Early Backpressure (#52)**: Kiểm tra số lượng active upload/OCR request ngay khi request vừa tới. Nếu hệ thống đã đạt tải trọng tối đa (`MAX_CONCURRENT_UPLOADS = 10`), lập tức phản hồi `HTTP 429` (kèm `Retry-After: 10`) và ngắt kết nối TCP **TRƯỚC KHI** nhận bất kỳ byte nội dung nào.
     2. **Early Header Check**: Kiểm tra `Content-Length > 50MB` $\rightarrow$ Trả về `HTTP 413` ngay lập tức.
     3. **On-the-fly Chunk Streaming Guard**: Wrap hàm `receive()` của ASGI để đếm tổng số bytes thực tế theo từng chunk. Ngay khi luồng chunked vượt quá 50MB, lập tức ngắt stream và trả về `HTTP 413`, chặn đứng nguy cơ tràn ổ cứng.
 - **Triệt Tiêu Hoàn Toàn Double RAM Allocation (Vá Lỗi #51)**:
-  - *Sai lầm cũ*: Gọi `content = await file.read()` nạp nguyên 50MB bytes vào RAM, sau đó lại bọc vào `io.BytesIO(content)` $\rightarrow$ Nhân đôi lượng RAM tiêu tốn ($100\text{MB}$ chỉ để giữ file).
-  - *Giải pháp*: Truyền trực tiếp đối tượng file-like `file.file` (`SpooledTemporaryFile`) xuống tầng Service và Engine. `pdfplumber.open(file.file)` và OpenCV/PIL đọc trực tiếp từ con trỏ file (hoặc đọc streaming), giải phóng 100% bộ đệm bytes dư thừa.
+  - Truyền trực tiếp đối tượng file-like `file.file` (`SpooledTemporaryFile`) xuống tầng Service và Engine. `pdfplumber.open(file.file)` và OpenCV/PIL đọc trực tiếp từ con trỏ file (hoặc đọc streaming), giải phóng 100% bộ đệm bytes dư thừa.
 - **Bảo Vệ CPU Concurrency Độc Quyền**: Khởi tạo `ocr_semaphore = asyncio.Semaphore(1)` trong `lifespan` bảo vệ tầng thực thi mô hình ONNX, kết hợp `asyncio.to_thread` với 2 tầng timeout độc lập (`QUEUE_TIMEOUT=10s`, `OCR_TIMEOUT=120s`).
 
 #### 2. Thiết kế triển khai:
 
-**A. ASGI Streaming Guard & Early Backpressure Middleware ([`backend/app/main.py`](file:///E:/MyProject/VNM-OCR/backend/app/main.py)):**
+**A. Khống chế Thư mục File Tạm tại dòng đầu `main.py` ([`backend/app/main.py`](file:///E:/MyProject/VNM-OCR/backend/app/main.py)):**
 
 ```python
-# backend/app/main.py
+# backend/app/main.py — BẮT BUỘC LÀ CÁC DÒNG ĐẦU TIÊN TRƯỚC MỌI APPLICATION IMPORT
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+# 1. Quản lý File Tạm (Sandboxing) — Tránh làm rác ổ C: trên Windows hoặc /tmp trên Linux (Issue #53)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+TEMP_DIR = PROJECT_ROOT / "temp"
+TEMP_DIR.mkdir(exist_ok=True)
+tempfile.tempdir = str(TEMP_DIR)
+
+# 2. Khóa luồng CPU đa nền tảng
+os.environ["OMP_NUM_THREADS"] = "2"
+os.environ["MKL_NUM_THREADS"] = "2"
+os.environ["OPENBLAS_NUM_THREADS"] = "2"
+os.environ["NUMEXPR_NUM_THREADS"] = "2"
+if sys.platform == "darwin":
+    os.environ["VECLIB_MAXIMUM_THREADS"] = "2"
+
+import cv2
+cv2.setNumThreads(2)
+```
+
+**B. Tầng Middleware Riêng Biệt ([`backend/app/middlewares/upload_guard.py`](file:///E:/MyProject/VNM-OCR/backend/app/middlewares/upload_guard.py)):**
+
+```python
+# backend/app/middlewares/upload_guard.py
 import asyncio
-from contextlib import asynccontextmanager
 from starlette.types import ASGIApp, Scope, Receive, Send
-from fastapi import FastAPI, Request, UploadFile, File, Query, Depends
 from fastapi.responses import JSONResponse
 
 MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50 MB
@@ -201,9 +233,34 @@ class StreamingUploadGuardMiddleware:
                     raise
 ```
 
-**B. Khởi tạo Lifespan & Đăng Ký Middleware ([`backend/app/main.py`](file:///E:/MyProject/VNM-OCR/backend/app/main.py)):**
+**C. Đăng Ký Middleware Tập Trung ([`backend/app/middlewares/__init__.py`](file:///E:/MyProject/VNM-OCR/backend/app/middlewares/__init__.py)):**
 
 ```python
+# backend/app/middlewares/__init__.py
+from fastapi import FastAPI
+from app.middlewares.upload_guard import StreamingUploadGuardMiddleware, MAX_UPLOAD_SIZE, MAX_CONCURRENT_UPLOADS
+
+def register_middlewares(app: FastAPI) -> None:
+    """Register all cross-cutting middlewares in proper execution order."""
+    app.add_middleware(
+        StreamingUploadGuardMiddleware,
+        max_upload_size=MAX_UPLOAD_SIZE,
+        max_concurrent=MAX_CONCURRENT_UPLOADS,
+    )
+```
+
+**D. Khởi tạo Lifespan & Ứng Dụng Tinh Gọn ([`backend/app/main.py`](file:///E:/MyProject/VNM-OCR/backend/app/main.py)):**
+
+```python
+# backend/app/main.py — TUYỆT ĐỐI KHÔNG CHỨA LOGIC ENDPOINT
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from app.core.config import settings
+from app.api.v1.router import api_router
+from app.middlewares import register_middlewares
+from app.exceptions.handlers import register_exception_handlers
+from app.engine.manager import get_engine_manager
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Khởi tạo Semaphore CPU độc quyền trong đúng event loop
@@ -219,11 +276,21 @@ async def lifespan(app: FastAPI):
     # Dọn dẹp session khi shutdown
     manager.clear_sessions()
 
-app = FastAPI(lifespan=lifespan)
-app.add_middleware(StreamingUploadGuardMiddleware, max_upload_size=MAX_UPLOAD_SIZE, max_concurrent=MAX_CONCURRENT_UPLOADS)
+app = FastAPI(
+    title=settings.APP_NAME,
+    version="1.0.0",
+    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url=f"{settings.API_V1_PREFIX}/openapi.json",
+)
+
+register_middlewares(app)
+register_exception_handlers(app)
+app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 ```
 
-**C. Áp dụng Direct File-Like Streaming cho Document Extract Endpoint ([`backend/app/api/v1/endpoints/document.py`](file:///E:/MyProject/VNM-OCR/backend/app/api/v1/endpoints/document.py)):**
+**E. Áp dụng Direct File-Like Streaming cho Document Extract Endpoint ([`backend/app/api/v1/endpoints/document.py`](file:///E:/MyProject/VNM-OCR/backend/app/api/v1/endpoints/document.py)):**
 
 ```python
 @router.post("/document/extract", response_model=DocumentExtractionResponse)
@@ -253,7 +320,6 @@ async def extract_document(
         # 2. Thực thi OCR ngoài main thread - Truyền TRỰC TIẾP file.file (Triệt tiêu Double RAM)
         try:
             async with asyncio.timeout(120.0):
-                # Đảm bảo con trỏ file ở đầu
                 await file.seek(0)
                 return await asyncio.to_thread(
                     service.extract_document,
@@ -272,18 +338,18 @@ async def extract_document(
         await file.close()  # Đóng và giải phóng file tạm trên đĩa
 ```
 
-**D. Áp dụng Direct File-Like Streaming cho Legacy OCR Endpoint ([`backend/app/main.py`](file:///E:/MyProject/VNM-OCR/backend/app/main.py)):**
+**F. Áp dụng Direct File Streaming cho OCR Endpoint Chuẩn Hóa ([`backend/app/api/v1/endpoints/ocr.py`](file:///E:/MyProject/VNM-OCR/backend/app/api/v1/endpoints/ocr.py)):**
 
 ```python
-@app.post("/api/ocr", tags=["Legacy UI Adapter"])
-async def legacy_ocr_endpoint(
+# backend/app/api/v1/endpoints/ocr.py
+@router.post("/ocr", response_model=OCRResponse, summary="Perform OCR on a single image")
+async def recognize_image(
     request: Request,
     file: UploadFile = File(...),
     service: OcrService = Depends(get_ocr_service),
-) -> list[list[Any]]:
+) -> OCRResponse:
     ocr_sem: asyncio.Semaphore = request.app.state.ocr_semaphore
     ocr_acquired = False
-    
     try:
         try:
             async with asyncio.timeout(10.0):
@@ -299,7 +365,7 @@ async def legacy_ocr_endpoint(
         try:
             async with asyncio.timeout(120.0):
                 await file.seek(0)
-                return await asyncio.to_thread(service.process_image_legacy, file.file)
+                return await asyncio.to_thread(service.process_image_file, file.file)
         except TimeoutError:
             return JSONResponse(
                 status_code=504,
@@ -732,20 +798,22 @@ tools = [
 ## 4. KẾ HOẠCH HÀNH ĐỘNG & DANH MỤC NHIỆM VỤ CHI TIẾT (ACTIONABLE TASKS)
 
 > [!IMPORTANT]
-> **Kết Quả Đối Chiếu Toàn Diện & Rà Soát Thiết Kế (Vòng 8):** Thiết kế kiến trúc và giải pháp kỹ thuật đã khắc phục triệt để 4 lỗ hổng framework FastAPI từ Vòng 8 (#49–#52: Hiểu lầm FastAPI Lifecycle, Chunked Transfer Disk DoS, Double RAM Allocation và Late Backpressure).
+> **Kết Quả Đối Chiếu Toàn Diện & Rà Soát Thiết Kế (Vòng 11):** Thiết kế kiến trúc và giải pháp kỹ thuật đã khắc phục triệt để các lỗ hổng framework, DevOps và Clean Architecture từ Vòng 8 đến Vòng 11 (#49–#56: Hiểu lầm FastAPI Lifecycle, Chunked Transfer Disk DoS, Double RAM Allocation, Late Backpressure, OS Temp Pollution, Middleware Scaffold, Main.py Routing Leak và Git Temp Ignore).
 >
 > **Thứ Tự Ưu Tiên Triển Khai Cấp Thiết (Execution Priority Order):**
-> 1. **TASK-08 (ASGI Streaming Guard Middleware & Early Backpressure — Vá #49, #50, #52)**: Triển khai Middleware chặn `Content-Length > 50MB`, đếm stream bytes on-the-fly chặn Disk DoS, và phản hồi `HTTP 429` sớm trước khi nhận body.
-> 2. **TASK-05 & TASK-07 (Direct File-Like Streaming & Zero-Copy Ingestion — Vá #51, #47)**: Truyền trực tiếp `file.file` (`SpooledTemporaryFile`) vào `iter_document_pages_smart`, loại bỏ triệt để biến `content` 50MB trong RAM, tích hợp `_try_extract_digital_text()` đơn lượt.
-> 3. **TASK-06 (Engine Memory Lifecycle & Operators Clean — Vá #40, #41, #42)**: Giải phóng `del ori_im` sớm, `img_crop_list.clear()`, refactor bỏ `eval()`, thêm `clear_sessions()` và `reset_singleton()` vào `EngineManager`.
-> 4. **TASK-01, TASK-02 (Graph Cache Auto-Discovery — Vá #46), TASK-03, TASK-04, TASK-09, TASK-10, TASK-11, TASK-12, TASK-13**: Hoàn tất các module hỗ trợ, benchmark và nghiệm thu đa nền tảng.
+> 1. **TASK-01 (Thread Budget, Temp Sandboxing & Gitignore — Vá #53, #56)**: Sandboxing `tempfile.tempdir = str(PROJECT_ROOT / "temp")`, bổ sung `.gitignore`, và khóa luồng CPU ngay dòng đầu `main.py`.
+> 2. **TASK-08 (Dedicated ASGI Streaming Guard Middleware & Early Backpressure — Vá #49, #50, #52, #54)**: Triển khai Middleware tách biệt trong `app/middlewares/` chặn `Content-Length > 50MB`, đếm stream bytes on-the-fly chặn Disk DoS, và phản hồi `HTTP 429` sớm trước khi nhận body.
+> 3. **TASK-09 (Clean Router Separation & Concurrency Control — Vá #55)**: Di dời toàn bộ logic endpoint khỏi `main.py` vào `app/api/v1/endpoints/ocr.py` và `document.py`, bọc `ocr_semaphore` với `asyncio.to_thread`.
+> 4. **TASK-05 & TASK-07 (Direct File-Like Streaming & Zero-Copy Ingestion — Vá #51, #47)**: Truyền trực tiếp `file.file` (`SpooledTemporaryFile`) vào `iter_document_pages_smart`, loại bỏ triệt để biến `content` 50MB trong RAM, tích hợp `_try_extract_digital_text()` đơn lượt.
+> 5. **TASK-06 (Engine Memory Lifecycle & Operators Clean — Vá #40, #41, #42)**: Giải phóng `del ori_im` sớm, `img_crop_list.clear()`, refactor bỏ `eval()`, thêm `clear_sessions()` và `reset_singleton()` vào `EngineManager`.
+> 6. **TASK-02 (Graph Cache Auto-Discovery — Vá #46), TASK-03, TASK-04, TASK-10, TASK-11, TASK-12, TASK-13**: Hoàn tất các module hỗ trợ, benchmark và nghiệm thu đa nền tảng.
 
 ```mermaid
 gantt
-    title Lộ Trình Triển Khai Kế Hoạch Tối Ưu Tài Nguyên OCR (v4.3.0)
+    title Lộ Trình Triển Khai Kế Hoạch Tối Ưu Tài Nguyên OCR (v4.5.0)
     dateFormat  YYYY-MM-DD
-    section Giai đoạn 1: Khóa Luồng & Cấu Hình Engine Đa Nền Tảng
-    TASK-01: Khóa biến môi trường theo OS tại dòng đầu main.py     :active, t1, 2026-09-01, 1d
+    section Giai đoạn 1: Khóa Luồng, Sandboxing & Cấu Hình Engine
+    TASK-01: Sandboxing Temp, Gitignore & Khóa biến môi trường dòng đầu main.py :active, t1, 2026-09-01, 1d
     TASK-02: Cấu hình ONNX & Graph Cache Auto-Discovery           :active, t2, after t1, 1d
     TASK-03: Tách biệt dependency PyTorch sang nhóm [tools]        :active, t3, after t2, 1d
     section Giai đoạn 2: Tối Ưu Bộ Nhớ & Streaming Ingestion
@@ -753,9 +821,9 @@ gantt
     TASK-05: Tối ưu Zero-Copy PIL & Direct File-Like Streaming     :t5, after t4, 1d
     TASK-06: Refactor NormalizeImage & tối ưu vòng đời OcrEngine   :t6, after t5, 1d
     TASK-07: Tối ưu DocumentService & Thu hồi bộ nhớ cuối chu kỳ  :t7, after t6, 1d
-    section Giai đoạn 3: ASGI Middleware & Concurrency Control
-    TASK-08: ASGI Streaming Guard Middleware & Early Backpressure  :t8, after t7, 1d
-    TASK-09: Direct File Streaming cho Endpoints & OCR Semaphore   :t9, after t8, 1d
+    section Giai đoạn 3: ASGI Middleware, Router & Concurrency
+    TASK-08: Dedicated ASGI Upload Guard Middleware (app/middlewares/) :t8, after t7, 1d
+    TASK-09: Clean Router Endpoints (ocr.py/document.py) & OCR Semaphore :t9, after t8, 1d
     TASK-10: Tích hợp Born-Digital Smart Fast Path                :t10, after t9, 1d
     section Giai đoạn 4: Kiểm Thử Đa Nền Tảng & Nghiệm Thu
     TASK-11: Xây dựng Benchmark Script tự động (RAM/CPU/Health)   :t11, after t10, 1d
@@ -767,15 +835,15 @@ gantt
 
 | Mã Task | Hạng Mục Công Việc | File Mã Nguồn Tác Động | Kết Quả Đầu Ra Cụ Thể |
 | :--- | :--- | :--- | :--- |
-| **TASK-01** | **Khóa cứng Thread Budget theo OS** | [`backend/app/main.py`](file:///E:/MyProject/VNM-OCR/backend/app/main.py) | Đặt biến môi trường `OMP/MKL/cv2` dòng đầu; phân nhánh `VECLIB` cho `sys.platform == "darwin"`. |
+| **TASK-01** | **Khóa cứng Thread, Sandboxing & Gitignore** | [`backend/app/main.py`](file:///E:/MyProject/VNM-OCR/backend/app/main.py), [`.gitignore`](file:///E:/MyProject/VNM-OCR/.gitignore) | Sandboxing `tempfile.tempdir = str(PROJECT_ROOT / "temp")`; thêm `temp/` và `.onnx_opt_cache/` vào `.gitignore`; đặt biến môi trường `OMP/MKL/cv2` dòng đầu. |
 | **TASK-02** | **Cấu hình ONNX & Graph Cache Auto-Discovery** | [`backend/app/engine/model_loader.py`](file:///E:/MyProject/VNM-OCR/backend/app/engine/model_loader.py) | Cấu hình `intra=2, inter=1, arena=False`; tự động xác định `cache_dir = model_path.parent / ".onnx_opt_cache"`. Bắt `PermissionError`. |
 | **TASK-03** | **Tách biệt Dependency PyTorch** | [`backend/pyproject.toml`](file:///E:/MyProject/VNM-OCR/backend/pyproject.toml) | Chuyển `torch/torchvision` từ `[dev]` sang nhóm `[tools]`, thêm `psutil` vào `[dev]`, bảo vệ virtualenv gọn nhẹ. |
 | **TASK-04** | **Module Thu Hồi Bộ Nhớ Đa Nền Tảng** | `backend/app/utils/memory_utils.py` (Tạo mới) | Xử lý `malloc_trim` (Linux), `malloc_zone_pressure_relief` (macOS), `HeapCompact` (Win), `gc.collect(2)` theo điều kiện. |
 | **TASK-05** | **Zero-Copy PIL & Direct File-Like Streaming** | [`backend/app/utils/image_utils.py`](file:///E:/MyProject/VNM-OCR/backend/app/utils/image_utils.py), [`backend/app/utils/pdf_utils.py`](file:///E:/MyProject/VNM-OCR/backend/app/utils/pdf_utils.py) | `pil_to_opencv` dùng slicing `[:, :, ::-1]`; `iter_document_pages_smart` stream trực tiếp từ `BinaryIO` (SpooledTemporaryFile) kết hợp `_try_extract_digital_text()` đơn lượt. |
 | **TASK-06** | **Refactor Operators & Vòng Đời Engine** | [`backend/app/engine/operators.py`](file:///E:/MyProject/VNM-OCR/backend/app/engine/operators.py), [`backend/app/engine/ocr_engine.py`](file:///E:/MyProject/VNM-OCR/backend/app/engine/ocr_engine.py), [`backend/app/engine/manager.py`](file:///E:/MyProject/VNM-OCR/backend/app/engine/manager.py) | Bỏ `eval()` trong `NormalizeImage`; giải phóng sớm `del ori_im` và `img_crop_list.clear()`; thêm `clear_sessions()` và `reset_singleton()` cho EngineManager. |
 | **TASK-07** | **Tối ưu DocumentService** | [`backend/app/services/document_service.py`](file:///E:/MyProject/VNM-OCR/backend/app/services/document_service.py) | Nhận `file_input: BinaryIO | bytes`, tích hợp generator `iter_document_pages_smart()`, phân nhánh fast path `isinstance(str)`, giải phóng page_img an toàn. |
-| **TASK-08** | **ASGI Streaming Guard Middleware & Early Backpressure** | [`backend/app/main.py`](file:///E:/MyProject/VNM-OCR/backend/app/main.py) | Tạo `StreamingUploadGuardMiddleware` chặn Content-Length > 50MB, đếm stream chunk on-the-fly chặn Disk DoS, và Early Backpressure trả HTTP 429 trước khi nhận body. |
-| **TASK-09** | **Direct File Streaming & OCR Semaphore** | [`backend/app/main.py`](file:///E:/MyProject/VNM-OCR/backend/app/main.py), [`backend/app/api/v1/endpoints/document.py`](file:///E:/MyProject/VNM-OCR/backend/app/api/v1/endpoints/document.py) | Truyền `file.file` trực tiếp vào `service.extract_document`, bọc `asyncio.to_thread` với `ocr_semaphore(1)` (timeout 10s queue / 120s ocr). |
+| **TASK-08** | **Dedicated ASGI Upload Guard Middleware** | `backend/app/middlewares/upload_guard.py`, `backend/app/middlewares/__init__.py` | Tạo `StreamingUploadGuardMiddleware` chặn Content-Length > 50MB, đếm stream chunk on-the-fly chặn Disk DoS, Early Backpressure trả HTTP 429 trước khi nhận body, đăng ký qua `register_middlewares(app)`. |
+| **TASK-09** | **Clean Router Separation & OCR Semaphore** | [`backend/app/api/v1/endpoints/ocr.py`](file:///E:/MyProject/VNM-OCR/backend/app/api/v1/endpoints/ocr.py), [`backend/app/api/v1/endpoints/document.py`](file:///E:/MyProject/VNM-OCR/backend/app/api/v1/endpoints/document.py), [`backend/app/main.py`](file:///E:/MyProject/VNM-OCR/backend/app/main.py) | Di dời toàn bộ logic endpoints khỏi `main.py`, truyền `file.file` trực tiếp, bọc `asyncio.to_thread` với `ocr_semaphore(1)` (timeout 10s queue / 120s ocr). |
 | **TASK-10** | **Born-Digital Fast Path** | [`backend/app/services/document_service.py`](file:///E:/MyProject/VNM-OCR/backend/app/services/document_service.py) | Trích xuất trực tiếp text vector nếu tài liệu là digital PDF (đã phân nhánh trên từng trang qua `iter_document_pages_smart`). |
 | **TASK-11** | **Bộ Benchmark & Kiểm Thử Tự Động** | `backend/tests/test_resource_budget.py` (Tạo mới) | Đo RSS đa nền tảng (psutil), đo latency `/health`, và test `Retry-After` với 3 requests đồng thời. |
 | **TASK-12** | **Sửa Bug & Ghi Nhận Known Issues** | Các files liên quan | Ghi nhận trade-off xử lý tuần tự `batch_size=1` của `TextRecognizer`; sửa bug fix cứng `score = 1.0` (mở ticket tracking). |
@@ -783,15 +851,15 @@ gantt
 
 ---
 
-## 5. BỘ CHỈ SỐ NGHIỆM THU ĐỊNH LƯỢNG (v4.3.0)
+## 5. BỘ CHỈ SỐ NGHIỆM THU ĐỊNH LƯỢNG (v4.5.0)
 
 Hệ thống sau khi hoàn thành kế hoạch tối ưu phải đáp ứng đầy đủ các tiêu chí định lượng sau:
 
-| Tiêu Chí Đo Lường | Hiện Trạng (Trước Tối Ưu) | Mục Tiêu Sau Tối Ưu (Target v4.3.0) | Phương Pháp Xác Minh |
+| Tiêu Chí Đo Lường | Hiện Trạng (Trước Tối Ưu) | Mục Tiêu Sau Tối Ưu (Target v4.5.0) | Phương Pháp Xác Minh |
 | :--- | :--- | :--- | :--- |
 | **Số Uvicorn Worker** | 1 Worker | **1 Worker duy nhất** | `uvicorn --workers 1` trong Dockerfile / run script. |
 | **Bảo Vệ Concurrency & Early Load Shedding** | Không giới hạn hoặc chặn sai chỗ | **ASGI Early Backpressure (Max 10 Uploads) + OCR Semaphore (1 CPU Task)** | Kiểm thử đồng thời 15 requests upload và 3 requests OCR. |
-| **Chống Disk Exhaustion DoS** | FastAPI ghi tràn ổ cứng khi nhận chunked lớn | **Ngắt kết nối & trả HTTP 413 ngay khi stream chunk > 50MB** | Test gửi payload 100MB qua `Transfer-Encoding: chunked`. |
+| **Chống Disk Exhaustion DoS & Temp Sandboxing** | FastAPI ghi tràn ổ C: /tmp khi nhận chunked lớn | **Ngắt stream HTTP 413 khi > 50MB + Ép 100% tempfile vào `backend/temp/` + Gitignored** | Test gửi chunked 100MB và kiểm tra `tempfile.tempdir`. |
 | **Mức Sử Dụng CPU (Compute Load)** | 8 – 16 luồng ngầm tranh chấp | **$\le$ 200% CPU (Tối đa 2 logical cores active)** | Giám sát qua `top`/`htop` hoặc `psutil.cpu_percent()`. |
 | **RAM Tĩnh (Baseline RSS)** | ~450 MB – 520 MB | **$\le$ 450 MB – 520 MB (Mô hình FP32 nguyên bản)** | Đo RSS RAM ngay sau khi khởi động và warmup xong. |
 | **RAM Đỉnh Tải — Ảnh Đơn (1 trang)** | ~800 MB – 1.0 GB | **$\le$ 700 MB (Loại bỏ hoàn toàn Double RAM bytes)** | Đo `max(RSS)` khi xử lý 1 ảnh tài liệu A4. |
@@ -809,10 +877,12 @@ Hệ thống sau khi hoàn thành kế hoạch tối ưu phải đáp ứng đ�
 
 ## 6. KẾT LUẬN
 
-Bản kế hoạch `v4.3.0` đã hoàn thiện và tích hợp đầy đủ các kết luận từ **Vòng 1 đến Vòng 8** của tài liệu phản biện `DOC-REP-COUNTER-003`:
-1. **Kiến Trúc ASGI Streaming Guard Triệt Tiêu Disk DoS & Early Backpressure**: Chặn đứng việc FastAPI ghi tràn đĩa cứng khi gặp Chunked Transfer tải trọng lớn, đồng thời từ chối `HTTP 429` ngay từ trước khi nạp body request giúp tiết kiệm 100% tài nguyên I/O khi quá tải.
-2. **Loại Bỏ Hoàn Toàn Double RAM Allocation**: Đọc trực tiếp từ `UploadFile.file` (`SpooledTemporaryFile`) vào `pdfplumber` và OpenCV mà không cần biến đệm `bytes` 50MB trong RAM, giảm đáng kể áp lực cấp phát bộ nhớ.
-3. **Graph Cache Tự Động Hóa (Zero-Configuration)**: Khởi tạo và tự suy luận thư mục `.onnx_opt_cache` từ đường dẫn mô hình, giải quyết triệt để lỗi dead code mà không phá vỡ giao diện API của các Engine.
-4. **Hiệu Năng Streaming Đơn Lượt & Zero-Copy**: Trích xuất text vector chuẩn trong 1 lượt gọi duy nhất (`_try_extract_digital_text`), kết hợp `pil_to_opencv` zero-copy NumPy view và generator từng trang, đảm bảo RAM luôn được khống chế $\le 1.2\text{GB}$ cho PDF 50 trang.
-5. **Bảo Mật & Quản Lý Vòng Đời Bộ Nhớ Đa Nền Tảng**: Loại bỏ hoàn toàn `eval()`, giải phóng sớm `del ori_im` sau khi crop, tích hợp `clear_sessions()` / `reset_singleton()` vào `EngineManager`, và thu hồi bộ nhớ tầng sâu trên Linux, macOS và Windows.
-6. **Sẵn Sàng Triển Khai Thực Tế (Execution Readiness)**: Kế hoạch đã đạt chuẩn xác định mức cao nhất về FastAPI Lifecycle và cấu trúc tài nguyên, sẵn sàng cho giai đoạn coding thực tế với thứ tự ưu tiên: **TASK-08 (ASGI Streaming Guard) $\rightarrow$ TASK-05/07 (Direct File Streaming & Zero-Copy) $\rightarrow$ TASK-06 (Engine Memory Lifecycle)**.
+Bản kế hoạch `v4.5.0` đã hoàn thiện và tích hợp đầy đủ các kết luận từ **Vòng 1 đến Vòng 11** của tài liệu phản biện `DOC-REP-COUNTER-003`:
+1. **Khống Chế File Tạm Khép Kín & Gitignore An Toàn**: Ngăn chặn rác file tạm tràn ra ổ đĩa OS bằng `tempfile.tempdir = str(PROJECT_ROOT / "temp")` và bảo vệ kho mã nguồn khỏi rác commit bằng `.gitignore`.
+2. **Tiêu Chuẩn Hóa Clean Architecture & Tách Biệt Router**: Di dời toàn bộ logic endpoint ra khỏi `main.py`, tách riêng tầng middleware `app/middlewares/` và router `app/api/v1/endpoints/`, biến `main.py` thành entry point chuẩn mực.
+3. **Kiến Trúc ASGI Streaming Guard Triệt Tiêu Disk DoS & Early Backpressure**: Chặn đứng việc FastAPI ghi tràn đĩa cứng khi gặp Chunked Transfer tải trọng lớn, đồng thời từ chối `HTTP 429` ngay từ trước khi nạp body request giúp tiết kiệm 100% tài nguyên I/O khi quá tải.
+4. **Loại Bỏ Hoàn Toàn Double RAM Allocation**: Đọc trực tiếp từ `UploadFile.file` (`SpooledTemporaryFile`) vào `pdfplumber` và OpenCV mà không cần biến đệm `bytes` 50MB trong RAM, giảm đáng kể áp lực cấp phát bộ nhớ.
+5. **Graph Cache Tự Động Hóa (Zero-Configuration)**: Khởi tạo và tự suy luận thư mục `.onnx_opt_cache` từ đường dẫn mô hình, giải quyết triệt để lỗi dead code mà không phá vỡ giao diện API của các Engine.
+6. **Hiệu Năng Streaming Đơn Lượt & Zero-Copy**: Trích xuất text vector chuẩn trong 1 lượt gọi duy nhất (`_try_extract_digital_text`), kết hợp `pil_to_opencv` zero-copy NumPy view và generator từng trang, đảm bảo RAM luôn được khống chế $\le 1.2\text{GB}$ cho PDF 50 trang.
+7. **Bảo Mật & Quản Lý Vòng Đời Bộ Nhớ Đa Nền Tảng**: Loại bỏ hoàn toàn `eval()`, giải phóng sớm `del ori_im` sau khi crop, tích hợp `clear_sessions()` / `reset_singleton()` vào `EngineManager`, và thu hồi bộ nhớ tầng sâu trên Linux, macOS và Windows.
+8. **Sẵn Sàng Triển Khai Thực Tế (Execution Sign-off)**: Kế hoạch `v4.5.0` đạt độ hoàn thiện cao nhất về chuẩn mực code, bảo mật I/O và tối ưu tài nguyên phần cứng. Sẵn sàng tiếp tục thực thi các task tiếp theo trong `tasks/todo.md`.
