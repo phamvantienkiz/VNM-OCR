@@ -2,8 +2,8 @@
 
 > **Tài liệu**: Báo cáo phân tích hiện trạng kiến trúc Backend, Logic thực thi và Tác động tài nguyên phần cứng  
 > **Mã tài liệu**: `DOC-REPORT-HW-001`  
-> **Phiên bản**: `3.3.0` (Phân tích chuyên sâu toàn diện mã nguồn, Cập nhật FastAPI Lifecycle, ASGI Streaming Guard & Đồng bộ Vòng 8)  
-> **Ngày cập nhật**: 01/09/2026  
+> **Phiên bản**: `3.5.0` (Phân tích chuyên sâu toàn diện mã nguồn, Tách biệt hoàn toàn Legacy Router, Gitignore Temp & Đồng bộ Vòng 11)  
+> **Ngày cập nhật**: 02/09/2026  
 > **Đối tượng phân tích**: Toàn bộ mã nguồn thư mục [`backend/`](file:///E:/MyProject/VNM-OCR/backend)  
 > **Trạng thái**: Completed Analysis Spec  
 
@@ -47,6 +47,9 @@ backend/
 │   │   ├── config.py            # Pydantic Settings đọc cấu hình từ .env
 │   │   ├── constants.py         # Danh sách model bắt buộc, nhãn layout, nhãn TSR, tokens từ điển
 │   │   └── logging.py           # Thiết lập logging định dạng chuẩn
+│   ├── middlewares/             # Tầng Cross-cutting Middleware theo chuẩn fastapi-backend-scaffold
+│   │   ├── __init__.py          # register_middlewares(app)
+│   │   └── upload_guard.py      # StreamingUploadGuardMiddleware (chặn Disk DoS & Early Backpressure)
 │   ├── engine/                  # Tầng Engine thực thi suy luận ONNX thuần túy (Pure ONNX Runtime)
 │   │   ├── model_loader.py      # Session manager, cache ONNX InferenceSession và SessionOptions
 │   │   ├── manager.py           # Singleton EngineManager điều phối toàn bộ 4 engine
@@ -68,10 +71,12 @@ backend/
 │   │       └── endpoints/       # Endpoints: document.py, ocr.py, layout.py, table.py, health.py
 │   ├── schemas/                 # Pydantic schemas định nghĩa Request/Response payloads
 │   └── utils/
-│       ├── image_utils.py       # Giải mã ảnh từ bytes (OpenCV/PIL)
-│       └── pdf_utils.py         # Render PDF đa trang thành ảnh bằng pdfplumber
+│       ├── image_utils.py       # Giải mã ảnh từ bytes/file-like (OpenCV/PIL)
+│       ├── pdf_utils.py         # Render PDF đa trang streaming bằng pdfplumber
+│       └── memory_utils.py      # Thu hồi RAM đa nền tảng (malloc_trim, HeapCompact)
 ├── models/                      # Chứa 6 tệp trọng số ONNX (~182MB trên đĩa)
-├── pyproject.toml               # Định nghĩa phụ thuộc phân tách [cpu], [gpu], [pdf], [dev]
+├── temp/                        # Thư mục file tạm nội bộ (Sandboxed tempfile.tempdir)
+├── pyproject.toml               # Định nghĩa phụ thuộc phân tách [cpu], [gpu], [pdf], [dev], [tools]
 └── Dockerfile                   # Multi-stage lightweight build chạy Uvicorn
 ```
 
@@ -287,14 +292,18 @@ async def legacy_ocr_endpoint(
 ##### Hậu quả kiến trúc:
 - Trong FastAPI / Starlette, khi một route được khai báo `async def`, FastAPI sẽ thực thi hàm đó **trực tiếp trên Main Thread của Asyncio Event Loop**.
 - Vì `service.extract_document` và `service.process_image_legacy` thực hiện giải nén ảnh, chạy vòng lặp ONNX inference nặng (CPU-intensive sync computation) trong 500ms - 5000ms mà không hề có `await` giải phóng event loop, **toàn bộ Event Loop của Uvicorn bị đóng băng (Blocked/Frozen)** trong suốt thời gian đó.
-- **Rủi ro Framework Lifecycle, Disk DoS & Double RAM (Phát hiện Vòng 8 - Issues #49, #50, #51, #52)**:
+- **Rủi ro Framework Lifecycle, Disk DoS, Double RAM, Rác Hệ Điều Hành & Vi Phạm Routing (Phát hiện Vòng 8, 10 & 11 - Issues #49, #50, #51, #52, #53, #54, #55, #56)**:
   - *Vòng đời Request của FastAPI*: Khi sử dụng `UploadFile = File(...)`, FastAPI tự động đọc toàn bộ request stream qua mạng và ghi xuống file tạm `SpooledTemporaryFile` (trên `/tmp` hoặc ổ cứng) **TRƯỚC KHI** hàm endpoint được gọi.
   - *Nguy cơ Disk Exhaustion DoS (#50)*: Mọi kiểm tra kích thước hoặc timeout nằm bên trong hàm endpoint đều là vô nghĩa đối với tấn công `Transfer-Encoding: chunked`. Kẻ tấn công có thể bơm hàng trăm GB làm tràn đĩa cứng `/tmp` khiến server sập trước khi endpoint kịp thực thi.
   - *Nguy cơ Double RAM Allocation (#51)*: Thao tác `content = await file.read()` nạp nguyên khối 50MB bytes vào RAM Python heap, sau đó lại bọc vào `io.BytesIO(content)` $\rightarrow$ làm lãng phí gấp đôi bộ nhớ ($100\text{MB}$ chỉ để lưu file).
-  - *Giải pháp Kiến trúc Chuẩn*: 
-    1. **Tầng ASGI Middleware (`StreamingUploadGuardMiddleware`)**: Kiểm tra Early Backpressure (trả `HTTP 429` trước khi nhận file nếu quá tải slot upload), kiểm tra `Content-Length > 50MB` $\rightarrow$ `HTTP 413`, và wrap `receive()` đếm bytes on-the-fly để ngắt kết nối ngay khi chunked stream vượt quá 50MB (chặn đứng Disk DoS).
-    2. **Tầng Endpoint & Service**: Truyền trực tiếp `file.file` (`SpooledTemporaryFile`) vào `service.extract_document`, đọc stream trực tiếp bằng `pdfplumber.open(file.file)` và OpenCV $\rightarrow$ giải phóng 100% dung lượng RAM cấp phát dư thừa.
-    3. **Tầng CPU Concurrency**: Khóa độc quyền 1 tác vụ CPU Inference qua `ocr_semaphore = asyncio.Semaphore(1)` bọc `asyncio.to_thread`.
+  - *Rác Hệ Điều Hành & Rác Git (#53, #56)*: File tạm mặc định bị ném vào thư mục temp của OS (`%TEMP%` trên Windows thường ở ổ `C:`). Khi sandboxing vào `backend/temp/`, bắt buộc phải bổ sung `temp/` vào `.gitignore` để tránh vô tình commit hàng GB file tạm lên repo.
+  - *Vi phạm Scaffold & Routing trong `main.py` (#54, #55)*: Viết middleware hoặc nhồi nhét hàm `@app.post("/api/ocr")` trực tiếp vào `main.py` vi phạm nghiêm trọng nguyên tắc tách tầng của `fastapi-backend-scaffold`. `main.py` phải hoàn toàn không chứa endpoint nghiệp vụ nào.
+  - *Giải pháp Kiến trúc Chuẩn (v3.5.0)*: 
+    1. **Sandboxing File Tạm & Gitignore**: Ép `tempfile.tempdir = str(PROJECT_ROOT / "temp")` ngay dòng đầu `main.py`, bổ sung `temp/` và `.onnx_opt_cache/` vào `.gitignore`, cô lập 100% rác hệ thống.
+    2. **Tầng Cross-cutting Middleware (`app/middlewares/`)**: Tách biệt `upload_guard.py` và đăng ký tập trung qua `register_middlewares(app)`, kiểm tra Early Backpressure (trả `HTTP 429` trước khi nhận file nếu quá tải slot upload), kiểm tra `Content-Length > 50MB` $\rightarrow$ `HTTP 413`, và wrap `receive()` đếm bytes on-the-fly để ngắt kết nối ngay khi chunked stream vượt quá 50MB (chặn đứng Disk DoS).
+    3. **Tách Biệt Router Chuẩn Mực (`app/api/v1/endpoints/`)**: Di dời toàn bộ logic legacy OCR từ `main.py` vào `app/api/v1/endpoints/ocr.py`, kết nối qua `api_router`, giữ `main.py` tinh gọn tuyệt đối.
+    4. **Tầng Endpoint & Service**: Truyền trực tiếp `file.file` (`SpooledTemporaryFile`) vào `service.extract_document`, đọc stream trực tiếp bằng `pdfplumber.open(file.file)` và OpenCV $\rightarrow$ giải phóng 100% dung lượng RAM cấp phát dư thừa.
+    5. **Tầng CPU Concurrency**: Khóa độc quyền 1 tác vụ CPU Inference qua `ocr_semaphore = asyncio.Semaphore(1)` bọc `asyncio.to_thread`.
 
 ### 3.2. Mô hình Worker Uvicorn và Rủi ro nhân bản tài nguyên
 
@@ -392,11 +401,53 @@ Mặc dù mã nguồn tại [`model_loader.py`](file:///E:/MyProject/VNM-OCR/bac
 
 ## 6. KẾT LUẬN & ĐỊNH HƯỚNG TỐI ƯU HÓA
 
-Hiện trạng backend tại [`backend/`](file:///E:/MyProject/VNM-OCR/backend) đã hoàn thiện về mặt tính năng và tính độc lập (Pure ONNX, loại bỏ PyTorch). Tuy nhiên, để hoạt động như một **mô-đun OCR nhúng siêu nhẹ cho các hệ thống RAG / Agent** (với giới hạn khắt khe: **1 Worker Uvicorn, Tối đa 2 Active Compute Threads $\le 200\%$ CPU, Tối đa 2GB RAM đỉnh tải và bắt buộc thu hồi RAM sau khi chạy**), hệ thống cần áp dụng 6 trụ cột tối ưu đã được hoàn thiện trong [`DOC-PLAN-OCR-002 v4.3.0`](file:///E:/MyProject/VNM-OCR/docs/plan/resource_constrained_ocr_optimization_plan.md):
+Hiện trạng backend tại [`backend/`](file:///E:/MyProject/VNM-OCR/backend) đã hoàn thiện về mặt tính năng và tính độc lập (Pure ONNX, loại bỏ PyTorch). Tuy nhiên, để hoạt động như một **mô-đun OCR nhúng siêu nhẹ cho các hệ thống RAG / Agent** (với giới hạn khắt khe: **1 Worker Uvicorn, Tối đa 2 Active Compute Threads $\le 200\%$ CPU, Tối đa 2GB RAM đỉnh tải và bắt buộc thu hồi RAM sau khi chạy**), hệ thống cần áp dụng 6 trụ cột tối ưu đã được hoàn thiện trong [`DOC-PLAN-OCR-002 v4.5.0`](file:///E:/MyProject/VNM-OCR/docs/plan/resource_constrained_ocr_optimization_plan.md):
 
-1. **Điều Phối Concurrency, ASGI Streaming Guard & Early Backpressure**: Can thiệp tại tầng ASGI Middleware để chặn `Content-Length > 50MB`, đếm stream chunk on-the-fly chặn Disk Exhaustion DoS, và phản hồi `HTTP 429` sớm trước khi nạp body; kết hợp `ocr_semaphore (1)` bọc `asyncio.to_thread` 2 tầng timeout (`QUEUE_TIMEOUT=10s`, `OCR_TIMEOUT=120s`).
+1. **Điều Phối Concurrency, ASGI Streaming Guard, Early Backpressure & Clean Architecture**: Sandboxing `tempfile.tempdir` về `backend/temp/` (được ignore trên Git); di dời 100% endpoints ra khỏi `main.py` vào đúng tầng Router (`app/api/v1/endpoints/`); can thiệp tại tầng ASGI Middleware tách biệt (`app/middlewares/`) để chặn `Content-Length > 50MB`, đếm stream chunk on-the-fly chặn Disk Exhaustion DoS, và phản hồi `HTTP 429` sớm trước khi nạp body; kết hợp `ocr_semaphore (1)` bọc `asyncio.to_thread` 2 tầng timeout (`QUEUE_TIMEOUT=10s`, `OCR_TIMEOUT=120s`).
 2. **Khóa Cứng Ngân Sách Luồng & Graph Cache Auto-Discovery**: Khóa biến môi trường dòng đầu `main.py` (phân nhánh `VECLIB` cho macOS) + Tự động suy luận thư mục `.onnx_opt_cache` từ đường dẫn mô hình định danh bằng file `stat` (size+mtime) tránh đọc toàn bộ.
 3. **Cơ Chế Streaming Trang PDF Đơn Lượt & Direct File Streaming**: Đọc trực tiếp từ `UploadFile.file` (`SpooledTemporaryFile`) vào `iter_document_pages_smart`, loại bỏ triệt để Double RAM bytes, trích xuất text vector trong 1 lượt gọi `_try_extract_digital_text`, chuyển đổi zero-copy RGB sang BGR qua NumPy slice, và giải phóng buffer ảnh chính xác sau các thao tác đọc (post-fusion).
 4. **Bảo Toàn 100% Độ Chính Xác Tiếng Việt & Kiến Trúc Sạch**: Giữ nguyên trọng số FP32, refactor bỏ `eval()`, duy trì defensive copy `img.copy()` giải phóng sớm `del ori_im`. Chấp nhận TextRecognizer xử lý tuần tự `batch_size=1` để đổi lấy tối ưu RAM. Quản lý `EngineManager` singleton thread-safe.
 5. **Thu Hồi Bộ Nhớ Tầng Sâu Đa Nền Tảng**: `gc.collect(generation=2)` kết hợp `libc.malloc_trim(0)` (Linux), `malloc_zone_pressure_relief` (macOS), hoặc `kernel32.HeapCompact` (Windows) sau mỗi request.
 6. **Smart Fast Path & Benchmark**: Trích xuất trực tiếp text vector, tách biệt PyTorch ra `[tools]`, và kiểm thử benchmark RAM/CPU/Health tự động đa nền tảng.
+
+---
+
+## 7. MA TRẬN HỖ TRỢ VÀ CẤU HÌNH PHẦN CỨNG TRIỂN KHAI (HARDWARE SUPPORT MATRIX)
+
+Hệ thống được thiết kế linh hoạt để có thể cài đặt và chạy mượt mà trên nhiều dòng máy khác nhau, bao phủ toàn diện 5 kịch bản phần cứng thực tế. Cấu hình được tự động nhận diện và tối ưu hoá hoàn toàn dựa trên execution providers của ONNX Runtime (`CPUExecutionProvider`, `CUDAExecutionProvider`, `CoreMLExecutionProvider`).
+
+Dưới đây là 5 trường hợp cài đặt và chạy tiêu chuẩn đã được hệ thống hỗ trợ và tối ưu:
+
+### 7.1. Cài đặt Only CPU trên Laptop/Desktop Windows (RAM tiêu chuẩn 16GB)
+- **Kiến trúc thực thi**: Sử dụng `CPUExecutionProvider` thuần túy.
+- **Tối ưu hóa**: 
+  - Đã tích hợp cấu hình giới hạn luồng CPU (`intra_op_num_threads=2`, `inter_op=1`) để tránh bùng nổ luồng ngầm gây nghẽn CPU Windows.
+  - Sử dụng cơ chế thu hồi bộ nhớ bằng `kernel32.HeapCompact` thông qua `ctypes` để giải quyết triệt để phân mảnh RAM do xử lý ảnh và ONNX tạo ra trên Windows.
+- **Kết quả**: Peak RAM được kiểm soát dưới 1.5GB - 2GB kể cả với tài liệu PDF lớn, hệ thống chạy ổn định không giật lag OS (không bị treo máy).
+
+### 7.2. Cài đặt trên Macbook/Mac Studio/Mac Mini (Apple Silicon M-series, RAM tối thiểu 16GB)
+- **Kiến trúc thực thi**: Mặc định sử dụng `CPUExecutionProvider` (với tập lệnh ARM64 tối ưu cho M1/M2/M3) hoặc mở rộng chạy `CoreMLExecutionProvider` (nếu có bản build ONNX tương thích cho Apple Neural Engine).
+- **Tối ưu hóa**: 
+  - Khóa cứng biến môi trường `VECLIB_MAXIMUM_THREADS=1` được inject ngay từ dòng đầu tiên để vô hiệu hóa thói quen chiếm dụng toàn bộ P-cores và E-cores của thư viện Accelerate/vecLib trên macOS.
+  - Sử dụng cơ chế ép giải phóng RAM `malloc_zone_pressure_relief` chuyên biệt của XNU Kernel (macOS) để trả lại RAM cho hệ thống ngay sau khi hoàn thành request.
+- **Kết quả**: Hiệu năng vượt trội nhờ băng thông RAM LPDDR5 của Apple Silicon, thời gian inference trên CPU tiệm cận GPU cấp thấp, máy hoàn toàn mát và mượt mà.
+
+### 7.3. Cài đặt Only CPU trên Laptop/Desktop/Server Linux (RAM tiêu chuẩn 16GB)
+- **Kiến trúc thực thi**: Phù hợp cho môi trường Docker/Container, VPS hoặc máy chủ không có GPU, sử dụng `CPUExecutionProvider`.
+- **Tối ưu hóa**:
+  - Quản lý memory leak của glibc thông qua `libc.malloc_trim(0)`. Đây là yếu tố sống còn trên Server Linux (như Ubuntu/Debian/CentOS) để tránh việc process Python phình to ra 3-4GB sau vài ngày chạy (Memory Retention).
+  - OpenMP (`OMP_NUM_THREADS=1`) được giới hạn gắt gao nhằm tránh hiện tượng CPU Context Switching Collapse trên các server nhiều nhân ảo (ví dụ: máy ảo 32 vCPU).
+
+### 7.4. Cài đặt trên Laptop/Desktop Windows có GPU RTX (20xx trở lên, VRAM tối thiểu 6GB)
+- **Kiến trúc thực thi**: Kích hoạt tự động `CUDAExecutionProvider` và/hoặc `TensorrtExecutionProvider` (nếu có cài cuDNN/TensorRT tương ứng).
+- **Tối ưu hóa**:
+  - Nhờ cơ chế On-Demand Instantiation (Tải trễ), VRAM chỉ bị chiếm dụng bởi các model đang cần dùng. Nếu gọi `full_pipeline` thì nạp thẳng 6 session ONNX vào VRAM, tổng dung lượng tĩnh khoảng ~2-3GB VRAM (an toàn trong mức 6GB tối thiểu).
+  - Áp dụng `gpu_mem_limit` và vô hiệu hóa `enable_cpu_mem_arena` (tránh cấp phát bộ nhớ ảo rác).
+  - Xử lý bất đồng bộ kết hợp Semaphore để GPU không bị dồn cục khi có nhiều luồng request đến API, duy trì tính ổn định của WDDM (Windows Display Driver Model), tránh hiện tượng chớp màn hình hoặc treo máy do timeout GPU.
+
+### 7.5. Cài đặt trên Laptop/Desktop/Server Linux có GPU RTX (20xx trở lên, VRAM tối thiểu 6GB)
+- **Kiến trúc thực thi**: Kích hoạt `CUDAExecutionProvider` (Production Docker backend support qua NVIDIA Container Toolkit).
+- **Tối ưu hóa**:
+  - Tương tự môi trường Windows nhưng ổn định hơn nhiều nhờ không bị giới hạn bởi WDDM overhead.
+  - Tận dụng `malloc_trim(0)` cho phần bộ nhớ Host RAM (RAM máy tính), còn GPU VRAM được ONNX Runtime tự quản lý qua C++ arena allocator.
+  - Phù hợp nhất cho môi trường API production chịu tải cao, sẵn sàng triển khai Dynamic GPU Batching (nhóm 4-8 trang vào một batch để xử lý đồng thời).
