@@ -43,3 +43,12 @@ def get_document_service(
 ) -> DocumentService:
     """Dependency provider for DocumentService."""
     return DocumentService(engine_manager=manager)
+
+
+def get_dispatcher_service(
+    doc_service: DocumentService = Depends(get_document_service),
+):
+    """Dependency provider for UniversalDocumentDispatcher."""
+    from app.services.dispatcher import UniversalDocumentDispatcher
+
+    return UniversalDocumentDispatcher(document_service=doc_service)

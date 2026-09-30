@@ -33,3 +33,16 @@ def test_engine_manager_initialize_and_warmup():
 
     # Run warmup
     mgr.warmup()
+
+
+def test_engine_manager_clear_and_reset():
+    models_dir = Path(__file__).resolve().parents[2] / "models"
+    mgr = EngineManager(models_dir=models_dir, device="cpu")
+    mgr.initialize()
+    assert mgr.is_ready is True
+    mgr.clear_sessions()
+    assert mgr._ocr_engine is None
+    assert mgr.is_ready is False
+
+    EngineManager.reset_singleton()
+    assert EngineManager._instance is None
