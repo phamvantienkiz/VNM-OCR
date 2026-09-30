@@ -12,7 +12,7 @@ Mục tiêu của Release 1 là xây dựng và hoàn thiện **VNM-OCR Core**, 
   - Server / GPU: Không giới hạn cứng nhưng vẫn tuân thủ nguyên tắc tiết kiệm tài nguyên.
 - **Khả năng tương thích:** Chạy mượt mà trên 5 nền tảng phần cứng chính (Windows CPU, Mac Apple Silicon, Linux CPU, Windows RTX GPU, Linux RTX GPU).
 - **Chất lượng bóc tách:** Bảo toàn 100% độ chính xác mô hình FP32 cho tiếng Việt.
-- **Phân loại Thông minh:** Áp dụng thuật toán Smart PDF Classification để tự động phân luồng xử lý tài liệu (Digital, Scanned, Complex, Corrupted) nhằm tiết kiệm 80% thời gian với Fast Path.
+- **Phân loại Thông minh:** Áp dụng thuật toán Smart PDF Classification phân loại chi tiết 10 PageType (BORN_DIGITAL, SCANNED, GHOST_OCR, CORRUPTED_VECTOR_VI/EN, COMPLEX_STRUCTURE_VI/EN, MIXED, IMAGE_ONLY, EMPTY) với phân luồng ngôn ngữ tường minh (Tiếng Việt → VNM-OCR, Tiếng Anh → PaddleOCR).
 - **Giao diện Người dùng:** Giao diện 3 cột trực quan (Tải lên, Xem trước, Kết quả Markdown/JSON), báo cáo Health Status theo thời gian thực.
 
 ## 3. Phạm vi tính năng (In-Scope Features)
@@ -25,17 +25,43 @@ Mục tiêu của Release 1 là xây dựng và hoàn thiện **VNM-OCR Core**, 
 - Middleware phòng thủ: `StreamingUploadGuardMiddleware` chặn File > 50MB và Early Backpressure (Max 10 active slots).
 
 ### 3.2. Smart PDF Classification & Hybrid Extraction (Phase 4)
-- **SmartPDFInspector:** Thuật toán duyệt trước tài liệu để tính điểm SCS (Scanned Content Score), từ đó phân loại: Tài liệu sinh số (Digital), Tài liệu Scan (Scanned), Tài liệu Hỏng (Corrupted), Tài liệu Phức tạp (Complex).
-- **UniversalDocumentDispatcher:** Bộ điều phối tự động quyết định luồng bóc tách (Fast Path không qua GPU cho Digital, hoặc Deep OCR cho Scanned).
-- **Explicit Endpoints:** Cung cấp API chuyên biệt `/api/v1/extract/ocr`, `/api/v1/extract/layout`, `/api/v1/extract/table` cho client.
+- **SmartPDFInspector (v2.5.0):** Thuật toán duyệt trước tài liệu PDF, tính điểm SCS (Scanned Content Score) kết hợp Multi-Signal Gating, phân loại chi tiết 10 PageType:
+  - `BORN_DIGITAL` — PDF sinh số hoàn toàn, text stream sạch.
+  - `SCANNED` — PDF scan hoặc ảnh chụp, không có text stream.
+  - `GHOST_OCR` — PDF có lớp OCR ẩn rác (text stream tồn tại nhưng mất dấu hoặc sai lệch).
+  - `CORRUPTED_VECTOR_VI` — Font/CMap vỡ trên tài liệu tiếng Việt → Rasterize + VNM-OCR cứu hộ.
+  - `CORRUPTED_VECTOR_EN` — Font/CMap vỡ trên tài liệu tiếng Anh → Rasterize + PaddleOCR cứu hộ.
+  - `COMPLEX_STRUCTURE_VI` — Bảng biểu lồng / báo cáo tài chính tiếng Việt → VNM-OCR DLA+TSR.
+  - `COMPLEX_STRUCTURE_EN` — Paper khoa học, LaTeX Math tiếng Anh → PaddleOCR-VL.
+  - `MIXED` — Trang lai ảnh và chữ.
+  - `IMAGE_ONLY` — Trang chỉ chứa ảnh, không có text.
+  - `EMPTY` — Trang rỗng.
+- **Vietnamese Syllable Fingerprint:** Nhận diện ngôn ngữ phân tầng cho văn bản song ngữ Việt-Anh bằng regex dấu tiếng Việt.
+- **Phân tách 2 cờ telemetry trực giao:**
+  - `requires_image_input` (Execution Modality): Engine đích cần bitmap hay không.
+  - `is_vector_recovery` (Quality Telemetry): Đánh dấu cứu hộ font lỗi.
+- **UniversalDocumentDispatcher:** Bộ điều phối sử dụng Strategy Pattern, chọn Extractor phù hợp dựa trên PageType + ngôn ngữ.
 
-### 3.3. VLM OCR Pathway (Future — Phase 5+)
+### 3.3. Comprehensive Format Extractors (Phase 6)
+Kiến trúc Extractor Pattern (Strategy Pattern) qua Interface `BaseExtractor`, mỗi Extractor chuyên biệt một nhóm tài liệu:
+
+| Extractor | Mục đích | PageType xử lý | `requires_image_input` | RAM Peak |
+|-----------|----------|----------------|------------------------|----------|
+| **NativePDFExtractor** | Fast Path: Đọc text stream trực tiếp từ PDF DOM (pdfplumber) | `BORN_DIGITAL` | False | < 200MB |
+| **VNMOCRExtractor** | Pipeline 7 bước ONNX tiếng Việt (DBNet+VietOCR+DLA+TSR) | `SCANNED`, `CORRUPTED_VECTOR_VI`, `COMPLEX_STRUCTURE_VI`, `GHOST_OCR`, `MIXED` | True | ~2GB |
+| **DoclingUniversalExtractor** | Xử lý Office (.docx, .xlsx, .pptx, html), `do_ocr=False` | Office formats | False | < 200MB |
+| **PaddleOCRExtractor** | Tiếng Anh phức tạp, PP-OCRv6 + PaddleOCR-VL cho LaTeX/Math | `COMPLEX_STRUCTURE_EN`, `CORRUPTED_VECTOR_EN` | True | ~2-4GB |
+
+- **Explicit Dedicated Endpoints:** Cho phép client gọi trực tiếp đúng pipeline cần thiết.
+- **Auto-routing:** Endpoint `/api/v1/extract/auto` tự động phân loại và chọn Extractor.
+
+### 3.4. VLM OCR Pathway (Future — Phase 5+)
 > **Ghi chú:** Phần này nằm ngoài Release 1 nhưng kiến trúc phải **sẵn sàng mở rộng** (extensible) để tích hợp VLM mà không cần refactor lại core.
 - Tích hợp VLM nhẹ (ví dụ: Qwen2-VL-2B quantized, Florence-2, PaddleOCR-VL) làm bộ recognizer thay thế hoặc bổ sung cho ONNX pipeline.
 - **RAM Budget cho VLM:** Model 2B quantized INT4 chiếm khoảng 1.5–2.5GB VRAM/RAM. Kết hợp với ONNX pipeline (~500MB baseline), tổng peak dự kiến $\le 3.5GB$ — nằm trong ngưỡng 4GB cho phép.
 - Cơ chế **Graceful Degradation:** Nếu phát hiện RAM không đủ cho VLM, tự động fallback về ONNX-only pipeline và log cảnh báo.
 
-### 3.4. Giao diện UI 3 cột (Phase 2)
+### 3.5. Giao diện UI 3 cột (Phase 2)
 - Layout CSS Grid chia 3 phần: Upload/Config, Viewport Canvas (Overlay BBox), Results (Markdown, Items, JSON).
 - Smart Health Polling tự động kiểm tra trạng thái khởi tạo ONNX Models.
 - Điều khiển hủy Request tự động (AbortController) khi đổi file.
@@ -54,7 +80,8 @@ Mục tiêu của Release 1 là xây dựng và hoàn thiện **VNM-OCR Core**, 
 | RAM Peak (PDF 30 trang, 150 DPI) | $\le 1.5GB$ | Mục tiêu lý tưởng cho laptop CPU |
 | RAM Peak (PDF 50 trang, 150 DPI) | $\le 2.0GB$ | Giới hạn cứng Tier 1 |
 | Thu hồi RAM về baseline | $\le 2s$ | Sau khi kết thúc request |
-| Fast Path (Digital PDF) | $< 50ms$/trang | Không qua ONNX inference |
+| Fast Path (Digital PDF) | $< 15ms$/trang | NativePDFExtractor, không qua ONNX inference |
+| Inspector phân loại | $\le 2ms$/trang | SmartPDFInspector v2.5.0 |
 | Concurrent requests | 10 requests | Trả HTTP 429/503 đúng chuẩn, không crash/OOM |
 
 ### 5.2. Tier 2 — VLM-Augmented (Future, nhưng kiến trúc chuẩn bị từ bây giờ)

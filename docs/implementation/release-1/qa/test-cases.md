@@ -8,7 +8,7 @@
 ## 2. Danh sách Test Cases cốt lõi (Core Test Cases)
 
 ### TC-01: Smart PDF Classification Accuracy
-- **Mô tả:** Đưa 3 loại tài liệu PDF vào `/api/v1/extract/smart-document`:
+- **Mô tả:** Đưa 3 loại tài liệu PDF vào `/api/v1/extract/auto`:
   - 1 file báo cáo kinh tế sinh số 100% (Digital).
   - 1 file hoá đơn đỏ chụp từ điện thoại (Scanned).
   - 1 file luận văn có công thức toán học dị hình (Corrupted).
@@ -49,7 +49,7 @@
   2. Request file 1GB bị ngắt ngay lập tức với mã `HTTP 413 Payload Too Large`.
 
 ### TC-06: Lazy Loading Validation
-- **Mô tả:** Khởi động Backend. Gọi API `/api/v1/health`. Kiểm tra VRAM/RAM. Sau đó gọi `/api/v1/extract/layout`. Kiểm tra lại VRAM/RAM.
+- **Mô tả:** Khởi động Backend. Gọi API `/api/v1/health`. Kiểm tra VRAM/RAM. Sau đó gọi `/api/v1/layout`. Kiểm tra lại VRAM/RAM.
 - **Kỳ vọng:** Ở API health, không có trọng số nào được nạp vào RAM. Khi gọi layout, chỉ duy nhất model `layout.onnx` được nạp vào VRAM, không nạp OCR models.
 
 ### TC-07: Health Endpoint Memory Reporting
@@ -97,3 +97,50 @@
 | Ubuntu CPU Server | 32GB | $\le 4GB$ (conservative) | HTTP 503 + malloc_trim |
 | Windows RTX GPU | 16GB + 6GB VRAM | $\le 2GB$ RAM + GPU offload | CUDA provider tự quản lý VRAM |
 | Linux RTX Server | 64GB + 8GB VRAM | $\le 4GB$ RAM | Thoải mái hơn, vẫn giữ kỷ luật |
+
+## Test Suite 5: Universal Extractor Routing & Explicit Endpoints (Phase 6)
+
+### 5.1. Auto-Routing qua SmartPDFInspector (10 PageType)
+
+| Test ID | PageType | Input mẫu | Expected `pipeline_used` | Expected Flags | Trạng thái |
+|---|---|---|---|---|---|
+| TC-5.1 | `BORN_DIGITAL` | PDF văn bản từ Word | `NativePDFExtractor` | `requires_image_input: false`, `is_vector_recovery: false` | Chờ xử lý |
+| TC-5.2 | `SCANNED` | PDF hợp đồng scan tiếng Việt | `VNMOCRExtractor` | `requires_image_input: true`, `is_vector_recovery: false` | Chờ xử lý |
+| TC-5.3 | `GHOST_OCR` | PDF có lớp OCR ẩn rác | `VNMOCRExtractor` | `requires_image_input: true`, `is_vector_recovery: true` | Chờ xử lý |
+| TC-5.4 | `CORRUPTED_VECTOR_VI` | PDF tiếng Việt vỡ CMap | `VNMOCRExtractor` | `requires_image_input: true`, `is_vector_recovery: true` | Chờ xử lý |
+| TC-5.5 | `CORRUPTED_VECTOR_EN` | PDF tiếng Anh vỡ CMap | `PaddleOCRExtractor` | `requires_image_input: true`, `is_vector_recovery: true` | Chờ xử lý |
+| TC-5.6 | `COMPLEX_STRUCTURE_VI` | PDF báo cáo bảng lồng tiếng Việt | `VNMOCRExtractor` | `requires_image_input: true`, `is_vector_recovery: false` | Chờ xử lý |
+| TC-5.7 | `COMPLEX_STRUCTURE_EN` | PDF paper LaTeX Math | `PaddleOCRExtractor` | `requires_image_input: true`, `is_vector_recovery: false` | Chờ xử lý |
+| TC-5.8 | `MIXED` | PDF trang lai ảnh và chữ | `VNMOCRExtractor` | `requires_image_input: true`, `is_vector_recovery: false` | Chờ xử lý |
+
+### 5.2. Explicit Endpoints
+
+| Test ID | Endpoint | Input | Expected | Trạng thái |
+|---|---|---|---|---|
+| TC-5.9 | `/extract/native/pdf` | PDF digital | Text trực tiếp, < 15ms/trang | Chờ xử lý |
+| TC-5.10 | `/extract/vnm` | Ảnh CMND tiếng Việt | Pipeline ONNX, tiếng Việt có dấu | Chờ xử lý |
+| TC-5.11 | `/extract/docling` | File .docx | Markdown, < 200ms, không OCR | Chờ xử lý |
+| TC-5.12 | `/extract/paddle/ocr` | Ảnh tài liệu tiếng Anh | Text tiếng Anh PP-OCRv6 | Chờ xử lý |
+
+### 5.3. Import-on-Demand & Fallback
+
+| Test ID | Kịch bản | Expected | Trạng thái |
+|---|---|---|---|
+| TC-5.13 | `/extract/docling` khi chưa cài docling | HTTP 501, hướng dẫn `pip install .[extractors]` | Chờ xử lý |
+| TC-5.14 | `/extract/paddle/ocr` khi chưa cài paddleocr | HTTP 501, hướng dẫn cài đặt | Chờ xử lý |
+| TC-5.15 | `/extract/auto` PDF EN phức tạp, PaddleOCR chưa cài | Fallback VNMOCRExtractor hoặc HTTP 501 | Chờ xử lý |
+
+### 5.4. Telemetry Metadata
+
+| Test ID | Kịch bản | Expected | Trạng thái |
+|---|---|---|---|
+| TC-5.16 | `/extract/auto` bất kỳ file | metadata chứa `classification`, `pipeline_used`, `requires_image_input`, `is_vector_recovery` | Chờ xử lý |
+| TC-5.17 | `score_capability()` mỗi Extractor | NativePDF: 1.0 BORN_DIGITAL / 0.0 SCANNED. VNM: 1.0 CORRUPTED_VECTOR_VI / 0.0 BORN_DIGITAL | Chờ xử lý |
+
+| Test ID | Tính năng | Các bước thực hiện | Kịch bản / Input | Kết quả mong muốn | Trạng thái |
+|---|---|---|---|---|---|
+| TC-5.1 | Routing Digital PDF | Gọi /api/v1/extract/auto với file PDF văn bản chuẩn | File PDF tạo từ Word | Trả về pipeline_used: NativePDFExtractor | Chờ xử lý |
+| TC-5.2 | Routing Office Doc | Gọi /api/v1/extract/docling với file .docx | File DOCX | Trả về thông qua DoclingUniversalExtractor, thời gian < 200ms | Chờ xử lý |
+| TC-5.3 | Routing Complex English | Gọi /api/v1/extract/auto với file PDF toán học tiếng Anh | PDF Paper Tiếng Anh (Math) | Trả về pipeline_used: PaddleOCRExtractor | Chờ xử lý |
+| TC-5.4 | Routing Scanned Vietnamese | Gọi /api/v1/extract/auto với file scan tiếng Việt | PDF Hợp đồng scan | Trả về pipeline_used: VNMOCRExtractor | Chờ xử lý |
+| TC-5.5 | Telemetry Flags | Gọi xử lý file lỗi CMap tiếng Việt | PDF bị vỡ CMap | Response metadata chứa is_vector_recovery: true, equires_image_input: true | Chờ xử lý |

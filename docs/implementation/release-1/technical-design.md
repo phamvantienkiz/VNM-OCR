@@ -1,148 +1,217 @@
-# Technical Design Document (TDD) - Release 1
+# Technical Design Document (TDD) - Release 1 & Phase 6
 
-## 1. Sơ đồ Tuần tự (Sequence Diagram) - Luồng Smart PDF Classification & Extraction
+## 1. Architectural Overview & Design Patterns
+Hệ thống VNM-OCR Backend được xây dựng trên nền tảng **FastAPI**, tuân thủ nghiêm ngặt nguyên tắc **Clean Architecture** và cấu trúc dự án `fastapi-backend-scaffold`. Hệ thống áp dụng mẫu **Strategy Pattern** qua các Extractors để hỗ trợ tính mở (Open-Closed Principle) khi bóc tách đa định dạng.
+
+### 1.1. Component Layers
+- **API Controllers (`app/api/v1/endpoints/`)**: Chuyên xử lý HTTP request/response, validation qua Pydantic schemas, không chứa business logic.
+- **Service & Extractors (`app/services/` & `app/services/extractors/`)**: Chứa logic nghiệp vụ cốt lõi. Giao tiếp với hạ tầng ONNX và xử lý luồng văn bản/ảnh.
+- **Middlewares (`app/middlewares/`)**: Xử lý các cross-cutting concerns (Rate Limiting, Upload Guard, Global Error Catching, Logging).
+- **Engine Layer (`app/engine/`)**: Tầng giao tiếp vật lý với AI models (ONNX Runtime, Autoregressive loop). Độc lập hoàn toàn với FastAPI HTTP context.
+
+### 1.2. Directory Structure (Phase 6 Complete)
+```text
+backend/app/
+├── api/v1/endpoints/
+│   ├── health.py           # GET /api/v1/health
+│   ├── ocr.py              # POST /api/v1/ocr & /api/ocr (legacy adapter)
+│   ├── layout.py           # POST /api/v1/layout
+│   ├── table.py            # POST /api/v1/table
+│   ├── document.py         # POST /api/v1/document/extract (RAG pipeline)
+│   └── extract.py          # POST /api/v1/extract/* (Phase 6 explicit endpoints)
+├── services/
+│   ├── document_service.py # Pipeline PDF → Render → Layout → OCR → Markdown
+│   ├── dispatcher.py       # UniversalDocumentDispatcher (Strategy Router)
+│   ├── inspector.py        # SmartPDFInspector v2.5.0 (PageType classification)
+│   └── extractors/
+│       ├── __init__.py     # Re-export all extractors
+│       ├── base.py         # BaseExtractor (ABC interface)
+│       ├── native.py       # NativePDFExtractor (Fast Path, pdfplumber)
+│       ├── vnm.py          # VNMOCRExtractor (ONNX 7-step pipeline)
+│       ├── docling.py      # DoclingUniversalExtractor (Office, optional dep)
+│       └── paddle.py       # PaddleOCRExtractor (English/Math, optional dep)
+├── engine/                 # ONNX Runtime layer (6 models)
+├── middlewares/            # StreamingUploadGuardMiddleware
+├── schemas/                # Pydantic V2 schemas
+├── exceptions/             # Custom exceptions & handlers
+└── utils/                  # memory_utils, image_utils, pdf_utils
+```
+
+## 2. Sequence Diagram: Hybrid Extraction Routing (Phase 6)
 
 ```mermaid
 sequenceDiagram
     participant C as Client (Frontend/API)
-    participant M as Middleware (UploadGuard)
-    participant MM as MemoryMonitor
-    participant E as Endpoint (/smart-document)
-    participant I as SmartPDFInspector
-    participant D as UniversalDispatcher
-    participant FP as Fast Path (pdfplumber)
-    participant HP as Heavy Path (ONNX Engine)
+    participant M as UploadGuard & MemoryMonitor
+    participant API as ExtractorController (/extract/auto)
+    participant D as UniversalDocumentDispatcher
+    participant I as SmartPDFInspector v2.5.0
+    participant Ext as Extractors (Strategy)
     participant OS as OS Memory Manager
 
-    C->>M: POST /smart-document (PDF File)
-    M->>M: Check Active Slots & File Size
-    alt Tải quá mức hoặc File > 50MB
-        M-->>C: 429 Too Many Requests / 413 Too Large
+    C->>M: POST /extract/auto (File)
+    M->>M: Check Active Slots, File Size, RSS Limit
+    alt Budget Exceeded
+        M-->>C: 503 Service Unavailable / 413 Too Large
     end
-    M->>MM: Check current RSS
-    alt RSS > MEMORY_HARD_LIMIT (3.5GB)
-        MM-->>C: 503 Service Unavailable (Memory Budget Exceeded)
+    M->>API: Forward Request
+    API->>D: dispatch(file_input)
+    D->>I: inspect(file_input)
+    I->>I: Sample 3 pages, compute SCS, detect language
+    I-->>D: List[PageProfile] with PageType + language + is_complex
+
+    D->>D: classify_document(profiles) → overall PageType
+    D->>D: Select Extractor via Strategy Pattern
+
+    alt BORN_DIGITAL (not complex)
+        D->>Ext: Route to NativePDFExtractor
+        Note right of Ext: pdfplumber text stream<br/>< 15ms/page, < 200MB
+    else SCANNED / CORRUPTED_VECTOR_VI / GHOST_OCR / COMPLEX_VI / MIXED
+        D->>Ext: Route to VNMOCRExtractor
+        Note right of Ext: ONNX 7-step pipeline<br/>DLA+DBNet+VietOCR+TSR<br/>~2GB peak
+    else CORRUPTED_VECTOR_EN / COMPLEX_STRUCTURE_EN
+        D->>Ext: Route to PaddleOCRExtractor
+        Note right of Ext: PP-OCRv6 or VL mode<br/>Optional dependency
+    else Office format (docx/xlsx/pptx/html)
+        D->>Ext: Route to DoclingUniversalExtractor
+        Note right of Ext: do_ocr=False<br/>Optional dependency
     end
-    M->>E: Forward Request
-    E->>I: inspect(file_path)
-    I->>I: Analyze SCS, Fraction Line, Fonts
-    I-->>E: Result (Type: DIGITAL / SCANNED / CORRUPTED)
-    E->>D: dispatch(file, Type)
-    
-    alt Type == DIGITAL
-        D->>FP: _extract_digital_text()
-        FP-->>D: Raw Text Vector
-    else Type == SCANNED or CORRUPTED
-        D->>HP: layout_engine.predict() + ocr_engine.predict()
-        HP->>HP: Lazy Load ONNX Sessions (nếu chưa nạp)
-        loop Per Page (Streaming)
-            HP->>MM: Check RSS after each page
-            alt RSS > MEMORY_SOFT_LIMIT (2GB)
-                MM->>OS: force_garbage_collection_and_trim()
-            end
-            HP-->>D: Bounding Boxes + Decoded Text (1 page)
-        end
-    end
-    
-    D-->>E: Full Markdown Response
-    E->>OS: force_garbage_collection_and_trim()
-    OS-->>E: Reclaim RAM
-    E-->>C: 200 OK (JSON + Markdown)
+
+    Ext->>Ext: execute extract() logic
+    Ext-->>D: DocumentExtractionResponse
+    D-->>API: Response + Metadata (telemetry)
+
+    API->>OS: force_garbage_collection_and_trim()
+    OS-->>API: Reclaim RAM
+    API-->>C: 200 OK (JSON + Markdown)
 ```
 
-## 2. Thiết kế Lớp (Class Design)
+## 3. Extractor Interface Contract (Strategy Pattern)
 
-### 2.1. Backend Core Interfaces
+Tất cả các định dạng tài liệu được bóc tách bằng một cấu trúc Interface chung (BaseExtractor), đảm bảo API Controller không cần quan tâm đến logic phức tạp bên trong.
 
-- **BaseExtractor:**
-  - `def extract(file: BinaryIO) -> ExtractorResult`
-  - `def capability_score(doc_profile) -> float`
-
-- **BaseRecognizer (Interface cho extensibility VLM):**
-  - `def recognize(image: np.ndarray) -> list[tuple[str, float]]`
-  - `def get_memory_requirement() -> int`  (bytes cần thiết để nạp model)
-  - Implementations: `ONNXRecognizer` (Release 1), `VLMRecognizer` (Future)
-
-- **SmartPDFInspector:**
-  - `def evaluate_scs(pdf_path: str) -> float`
-  - `def detect_math_gates(pdf_path: str) -> bool`
-
-- **UniversalDocumentDispatcher:**
-  - `def route_document(file: BinaryIO) -> BaseExtractor`
-
-- **EngineManager (Singleton):**
-  - `def get_engine(model_type: str) -> ONNXSession`
-  - `def clear_sessions()`
-  - Tích hợp thread-safety lock `asyncio.Lock()` khi nạp mô hình trong môi trường web.
-
-- **MemoryBudgetMonitor:**
-  - `def get_rss_mb() -> float`
-  - `def check_can_accept_request() -> bool`
-  - `def check_can_load_model(model_memory_bytes: int) -> bool`
-  - `def get_budget_status() -> dict` (trả về `{"rss_mb", "soft_limit_mb", "hard_limit_mb", "status"}`)
-
-## 3. Kiến trúc Đa luồng & Semaphore
-Để đảm bảo giới hạn phần cứng (2 luồng, <= 2GB RAM cho Tier 1, <= 4GB cho Tier 2), tất cả các hàm liên quan đến ONNX/VLM Inference đều phải bị bọc bởi một Semaphore toàn cục:
 ```python
-# app/core/state.py
-import asyncio
-ocr_semaphore = asyncio.Semaphore(1)
+# app/services/extractors/base.py
+from abc import ABC, abstractmethod
+from typing import Any, BinaryIO
+from app.schemas.document import DocumentExtractionResponse
 
-# app/api/v1/endpoints/document.py
-async def extract_doc():
-    # Kiểm tra memory budget TRƯỚC KHI chờ semaphore
-    monitor = get_memory_monitor()
-    if not monitor.check_can_accept_request():
-        raise HTTPException(
-            status_code=503, 
-            detail="Server memory budget exceeded. Please retry later.",
-            headers={"Retry-After": "30"},
-        )
-    
-    try:
-        async with asyncio.timeout(30): # Đợi slot 30s (tăng từ 10s để hỗ trợ VLM chậm)
-            async with ocr_semaphore:
-                result = await asyncio.to_thread(service.extract, file.file)
-                
-                # Kiểm tra RSS sau inference
-                if monitor.get_rss_mb() > settings.MEMORY_SOFT_LIMIT_MB:
-                    force_garbage_collection_and_trim()
-                    
-                return result
-    except TimeoutError:
-        raise HTTPException(status_code=503, detail="Server overloaded")
+class BaseExtractor(ABC):
+    """Base interface for all document extractors (Strategy Pattern)."""
+
+    @abstractmethod
+    def extract(self, file_input: BinaryIO | bytes, **kwargs: Any) -> DocumentExtractionResponse:
+        """Extract document content and return standardized response."""
+        pass
+
+    def score_capability(
+        self, page_type: str, language: str = "vi", is_complex: bool = False
+    ) -> float:
+        """Score how well this extractor handles the given document profile.
+        Returns 0.0 (cannot handle) to 1.0 (perfect match).
+        Default: 0.0 (subclass must override for auto-routing).
+        """
+        return 0.0
 ```
 
-> **Lưu ý timeout:** Queue timeout được tăng từ 10s lên 30s để đảm bảo VLM (tương lai) có đủ thời gian xử lý. OCR timeout vẫn giữ 120s cho xử lý PDF nhiều trang.
+### Extractor Capabilities Matrix:
 
-## 4. Quản lý Thư mục Tạm (Temp Sandbox)
+| Extractor | PageTypes xử lý | `requires_image_input` | RAM Peak | Dependency |
+|-----------|-----------------|----------------------|----------|------------|
+| **NativePDFExtractor** | `BORN_DIGITAL` | False | < 200MB | `pdfplumber` (core) |
+| **VNMOCRExtractor** | `SCANNED`, `CORRUPTED_VECTOR_VI`, `COMPLEX_STRUCTURE_VI`, `GHOST_OCR`, `MIXED`, `IMAGE_ONLY` | True | ~2GB | `onnxruntime` (core) |
+| **DoclingUniversalExtractor** | Office (docx, xlsx, pptx, html) | False | < 200MB | `docling` (optional `[extractors]`) |
+| **PaddleOCRExtractor** | `COMPLEX_STRUCTURE_EN`, `CORRUPTED_VECTOR_EN`, `SCANNED` (EN) | True | ~2-4GB | `paddleocr` (optional `[extractors]`) |
+
+### Import-on-Demand Pattern:
 ```python
-# app/main.py
-import tempfile
-from pathlib import Path
+# app/services/extractors/docling.py
+import importlib.util
+from fastapi import HTTPException
 
-TEMP_DIR = Path(__file__).resolve().parent.parent / "temp"
-TEMP_DIR.mkdir(exist_ok=True)
-tempfile.tempdir = str(TEMP_DIR)
+class DoclingUniversalExtractor(BaseExtractor):
+    def extract(self, file_input, **kwargs):
+        if importlib.util.find_spec("docling") is None:
+            raise HTTPException(
+                status_code=501,
+                detail="Docling is not installed. Run: pip install .[extractors]"
+            )
+        from docling.document_converter import DocumentConverter
+        # ... extraction logic
 ```
-- Phải đảm bảo `temp/` nằm trong `.gitignore` để tránh rác sinh ra trong quá trình deploy.
 
-## 5. Memory Budget Configuration
+## 4. API Surface Summary
+
+Tuân thủ nguyên tắc API Design Patterns, API Surface cung cấp cả Legacy endpoints và Explicit Dedicated Endpoints.
+
+### 4.1. Legacy Endpoints (Phase 1-5, vẫn hoạt động)
+- `GET /api/v1/health` — Liveness, models ready, memory stats
+- `POST /api/v1/ocr` — OCR ảnh đơn
+- `POST /api/v1/layout` — DLA only
+- `POST /api/v1/table` — TSR only
+- `POST /api/v1/document/extract` — Full RAG pipeline
+- `POST /api/ocr` — Legacy UI adapter
+
+### 4.2. Phase 6 Explicit Endpoints (`extract.py`)
+- `POST /api/v1/extract/auto` — Router tự động qua SmartPDFInspector
+- `POST /api/v1/extract/native/pdf` — Explicit Digital PDF
+- `POST /api/v1/extract/vnm` — Explicit pipeline tiếng Việt
+- `POST /api/v1/extract/docling` — Explicit Office processing
+- `POST /api/v1/extract/paddle/ocr` — Explicit tiếng Anh
+- `POST /api/v1/extract/paddle/complex-vlm` — Explicit Paper/Math VLM
+
+### 4.3. Telemetry Metadata Output (Consistent Response)
+```json
+{
+  "total_pages": 5,
+  "full_markdown": "...",
+  "pages": [...],
+  "elapsed_ms": 1520.5,
+  "metadata": {
+    "is_pdf": true,
+    "classification": "SCANNED",
+    "pipeline_used": "VNMOCRExtractor",
+    "requires_image_input": true,
+    "is_vector_recovery": false,
+    "sampled_profiles": [...]
+  }
+}
+```
+
+## 5. Memory Management & Multi-threading
+
+Để đảm bảo không bao giờ vi phạm giới hạn RAM 2GB (Soft) và 3.5GB (Hard), hệ thống áp dụng:
+1. **Semaphore Khóa Luồng (ocr_semaphore)**: Giới hạn tối đa 1 hoặc 2 request chạy model cùng lúc. Queue timeout = 30s (hỗ trợ VLM).
+2. **Explicit Garbage Collection**: Hàm `force_garbage_collection_and_trim()` (gọi OS malloc_trim hoặc HeapCompact) luôn nằm trong khối `finally` của API Controller.
+3. **Lazy Loading (On-demand)**: EngineManager đảm bảo mô hình ONNX chỉ nạp khi VNMOCRExtractor được invoke. Docling và PaddleOCR tuân thủ nguyên tắc tương tự (Import on demand) để tránh phình to baseline RAM.
+4. **Memory Budget Monitor**: Kiểm tra RSS trước accept request và sau mỗi page processing. Soft limit 2GB → GC tích cực. Hard limit 3.5GB → HTTP 503.
+
+## 6. UniversalDocumentDispatcher — Cập nhật Phase 6
+
+### 6.1. Hiện trạng Code (`dispatcher.py`)
+Dispatcher hiện tại chỉ gọi `document_service.extract_document()` cho mọi loại tài liệu. Cần cập nhật để:
+1. Route đến đúng Extractor instance dựa trên PageType.
+2. Truyền cờ `requires_image_input` và `is_vector_recovery` vào response metadata.
+3. Hỗ trợ cả Office formats (không chỉ PDF).
+
+### 6.2. Thiết kế mới
 ```python
-# app/core/config.py (bổ sung)
-class Settings(BaseSettings):
-    # Memory Budget (configurable via .env)
-    MEMORY_SOFT_LIMIT_MB: float = 2048.0     # 2GB - Trigger aggressive GC
-    MEMORY_HARD_LIMIT_MB: float = 3584.0     # 3.5GB - Reject new requests
-    MEMORY_CRITICAL_RATIO: float = 0.90      # 90% total system RAM - Emergency unload
-    
-    # VLM Configuration (Future-ready)
-    OCR_RECOGNIZER_BACKEND: str = "onnx"     # "onnx" or "vlm"
-    VLM_MIN_AVAILABLE_RAM_MB: float = 3072.0 # 3GB minimum free RAM to load VLM
-```
+class UniversalDocumentDispatcher:
+    def __init__(self):
+        self.inspector = SmartPDFInspector
+        self._extractors: dict[str, BaseExtractor] = {}
 
-> **Đối với laptop 16GB RAM:**
-> - Soft limit 2GB → GC chủ động, giữ ứng dụng nhẹ nhàng.
-> - Hard limit 3.5GB → Từ chối request, bảo vệ hệ thống.
-> - Critical 90% (14.4GB) → Không bao giờ đạt vì hard limit đã chặn trước.
-> - Kết quả: Ứng dụng luôn dưới 4GB, OS và ứng dụng khác có ≥12GB.
+    def register_extractor(self, name: str, extractor: BaseExtractor):
+        self._extractors[name] = extractor
+
+    def _select_extractor(self, page_type: PageType, language: str, is_complex: bool) -> BaseExtractor:
+        """Select best extractor based on PageType + language via score_capability()."""
+        best_score, best_ext = 0.0, None
+        for ext in self._extractors.values():
+            score = ext.score_capability(page_type.value, language, is_complex)
+            if score > best_score:
+                best_score, best_ext = score, ext
+        if best_ext is None:
+            raise ValueError(f"No extractor can handle: {page_type}")
+        return best_ext
+```
