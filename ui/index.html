@@ -1,191 +1,423 @@
 <!DOCTYPE html>
-<html lang="vi" class="h-full antialiased">
+<html lang="vi" class="h-100">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vietnamese OCR Demo</title>
-    <meta name="description" content="Trang chạy thử nghiệm trực quan module nhận dạng chữ Tiếng Việt - OCR">
+    <title>Vietnamese OCR Demo — Trích xuất & Số hóa Tài liệu Tiếng Việt</title>
+    <meta name="description" content="Trang chạy thử nghiệm trực quan hệ thống OCR tiếng Việt và phân tích bố cục tài liệu chuẩn Microservice FastAPI">
     
-    <!-- Fonts -->
+    <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300..800;1,300..800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
     
-    <!-- Stylesheet -->
+    <!-- Bootstrap 5.3.3 CDN & Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    
+    <!-- Custom Design Tokens & 3-Column Layout CSS -->
     <link rel="stylesheet" href="style.css">
     
-    <!-- PDF.js CDN -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <!-- PDF.js CDN v3.11.174 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script>
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     </script>
 </head>
-<body class="min-h-full bg-slate-50 text-slate-900">
-    <div class="app-container">
-        <!-- Sidebar -->
-        <aside class="sidebar">
-            <div class="sidebar-header">
-                <span class="logo-badge">VN</span>
-                <span class="logo-text">VietOCR Demo</span>
-            </div>
-            
-            <nav class="sidebar-nav">
-                <a href="#" class="nav-item active" aria-current="page">
-                    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    Nhận dạng OCR
-                </a>
-                <a href="#" class="nav-item">
-                    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-                    </svg>
-                    Phân tích Bố cục
-                </a>
-                <a href="#" class="nav-item">
-                    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                    </svg>
-                    Cấu hình Model
-                </a>
-            </nav>
+<body class="h-100 d-flex flex-column bg-slate-50 text-slate-900 overflow-hidden">
 
-            <div class="sidebar-footer">
-                <span class="app-version">v1.0.0 · RAGFlow Deepdoc</span>
+    <!-- Topbar Header (Bước 1.2) -->
+    <header class="app-topbar navbar navbar-expand border-bottom bg-white px-3 px-lg-4 flex-shrink-0" style="height: 56px;">
+        <div class="container-fluid p-0 d-flex align-items-center justify-content-between">
+            <!-- Left: Logo & Project Brand -->
+            <div class="d-flex align-items-center gap-2">
+                <!-- Mobile/Tablet Offcanvas Toggle Button (< 1280px) -->
+                <button class="btn btn-sm btn-outline-secondary d-xl-none py-1 px-2 me-1" type="button" data-bs-toggle="offcanvas" data-bs-target="#uploadOffcanvas" aria-controls="uploadOffcanvas" aria-label="Mở bảng điều khiển tải tệp">
+                    <i class="bi bi-layout-sidebar"></i>
+                </button>
+
+                <div class="brand-badge d-flex align-items-center justify-content-center bg-indigo-600 text-white rounded-3 fw-bold" style="width: 32px; height: 32px; font-size: 0.875rem;">
+                    VN
+                </div>
+                <div class="d-flex flex-column">
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="fw-bold text-slate-900 tracking-tight" style="font-family: var(--font-display); font-size: 1.05rem;">VietOCR Studio</span>
+                        <span class="badge bg-indigo-50 text-indigo-700 border border-indigo-200 fw-semibold rounded-pill px-2 py-0.5" style="font-size: 0.7rem;">v1.4.1 AI Engine</span>
+                    </div>
+                    <span class="text-muted d-none d-md-inline" style="font-size: 0.72rem;">Nhận dạng ký tự & phân tích bố cục tài liệu Tiếng Việt</span>
+                </div>
+            </div>
+
+            <!-- Right: Health Status & Links -->
+            <div class="d-flex align-items-center gap-2 gap-sm-3">
+                <!-- Health & Readiness Badge -->
+                <div id="api-status" class="status-badge status-warning d-flex align-items-center gap-1.5 px-2.5 py-1 rounded-pill" title="Trạng thái kết nối API và mô hình AI">
+                    <span class="pulse-dot"></span>
+                    <span class="status-text fw-semibold" style="font-size: 0.75rem;">Đang kết nối API...</span>
+                </div>
+
+                <!-- API Docs Swagger Link -->
+                <a href="/docs" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-slate d-flex align-items-center gap-1.5 px-2.5 py-1 rounded-2 text-decoration-none" title="Xem tài liệu API Swagger">
+                    <i class="bi bi-file-earmark-code"></i>
+                    <span class="d-none d-sm-inline" style="font-size: 0.8rem;">API Docs</span>
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main 3-Column Layout Grid (Bước 1.3) -->
+    <main class="app-layout-grid flex-grow-1 overflow-hidden">
+
+        <!-- ========================================================================= -->
+        <!-- CỘT 1: TẢI TỆP & CẤU HÌNH (Upload & Settings — 25% / Min 280px)           -->
+        <!-- ========================================================================= -->
+        <aside id="uploadOffcanvas" class="column-upload offcanvas-xl offcanvas-start d-flex flex-column h-100 bg-white border-end shadow-sm" tabindex="-1" aria-labelledby="uploadOffcanvasLabel">
+            <!-- Offcanvas Header for Mobile/Tablet -->
+            <div class="offcanvas-header d-xl-none border-bottom py-2.5 px-3">
+                <h5 class="offcanvas-title fw-bold text-slate-800 fs-6" id="uploadOffcanvasLabel">
+                    <i class="bi bi-sliders me-1.5 text-indigo-600"></i> Tải tệp & Cấu hình
+                </h5>
+                <button type="button" class="btn-close text-reset" data-bs-dismiss="offcanvas" aria-label="Đóng"></button>
+            </div>
+
+            <!-- Column 1 Scrollable Content -->
+            <div class="column-content p-3 d-flex flex-column gap-3 overflow-y-auto flex-grow-1">
+
+                <!-- 1.1 Drag & Drop Zone -->
+                <div class="section-block">
+                    <label class="form-label-custom d-flex align-items-center justify-content-between mb-1.5">
+                        <span><i class="bi bi-cloud-arrow-up me-1 text-indigo-600"></i> Tải lên tài liệu</span>
+                        <span class="badge text-bg-light text-muted fw-normal" style="font-size: 0.68rem;">Tối đa 20MB</span>
+                    </label>
+
+                    <!-- Dropzone Box -->
+                    <div id="drop-zone" class="dropzone-box text-center p-3 rounded-3 border-2 border-dashed position-relative" tabindex="0" role="button" aria-describedby="upload-help">
+                        <input type="file" id="file-input" class="d-none" accept=".pdf,.png,.jpg,.jpeg,.webp,.tiff,.bmp,application/pdf,image/*">
+                        
+                        <div class="dropzone-default-view">
+                            <div class="dropzone-icon-circle mx-auto mb-2 bg-indigo-50 text-indigo-600 rounded-circle d-flex align-items-center justify-content-center">
+                                <i class="bi bi-file-earmark-arrow-up fs-4"></i>
+                            </div>
+                            <p class="dropzone-title mb-1 fw-semibold text-slate-800" style="font-size: 0.85rem;">
+                                Kéo thả tệp vào đây, hoặc <span class="text-indigo-600 text-decoration-underline">chọn tệp</span>
+                            </p>
+                            <p id="upload-help" class="dropzone-desc mb-0 text-muted" style="font-size: 0.72rem;">
+                                Hỗ trợ PDF, PNG, JPG, WEBP, TIFF, BMP
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- File Info Card (Active when file loaded) -->
+                    <div id="file-info-card" class="file-info-card d-none mt-2 p-2.5 rounded-3 border bg-slate-50">
+                        <div class="d-flex align-items-center justify-content-between">
+                            <div class="d-flex align-items-center gap-2 text-truncate me-2">
+                                <i id="file-type-icon" class="bi bi-file-earmark-pdf text-danger fs-5 flex-shrink-0"></i>
+                                <div class="text-truncate">
+                                    <div id="file-name" class="fw-semibold text-slate-900 text-truncate" style="font-size: 0.8rem;">document.pdf</div>
+                                    <div id="file-meta" class="text-muted" style="font-size: 0.7rem;">2.4 MB · PDF 3 trang</div>
+                                </div>
+                            </div>
+                            <button id="change-file-btn" class="btn btn-sm btn-outline-secondary py-0.5 px-1.5 flex-shrink-0" style="font-size: 0.72rem;" title="Đổi tệp khác">
+                                <i class="bi bi-arrow-repeat"></i> Đổi
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 1.2 Pipeline & Cấu hình Options -->
+                <div class="section-block border-top pt-2.5">
+                    <label class="form-label-custom mb-2">
+                        <i class="bi bi-gear-wide-connected me-1 text-indigo-600"></i> Chế độ xử lý
+                    </label>
+
+                    <!-- Endpoint Selector Pills -->
+                    <div class="endpoint-toggle-group btn-group w-100 mb-2.5" role="group" aria-label="Chọn chế độ xử lý OCR">
+                        <input type="radio" class="btn-check" name="endpoint-mode" id="mode-ocr" value="/api/v1/ocr" checked autocomplete="off">
+                        <label class="btn btn-outline-indigo btn-sm py-1.5" for="mode-ocr" style="font-size: 0.78rem;">
+                            <i class="bi bi-fonts me-1"></i> OCR Đơn dòng
+                        </label>
+
+                        <input type="radio" class="btn-check" name="endpoint-mode" id="mode-doc" value="/api/v1/document/extract" autocomplete="off">
+                        <label class="btn btn-outline-indigo btn-sm py-1.5" for="mode-doc" style="font-size: 0.78rem;">
+                            <i class="bi bi-file-earmark-richtext me-1"></i> Trích xuất Layout
+                        </label>
+                    </div>
+
+                    <!-- Document Pipeline Options (Ẩn khi chọn OCR Đơn dòng) -->
+                    <div id="document-options-group" class="document-options-box d-none p-2.5 rounded-3 border bg-slate-50 mb-2.5">
+                        <div class="mb-2">
+                            <label class="d-flex justify-content-between align-items-center mb-1 text-slate-700 fw-medium" style="font-size: 0.75rem;">
+                                <span>Độ phân giải PDF (Resolution)</span>
+                                <span class="badge bg-slate-200 text-slate-700" style="font-size: 0.65rem;">72–300 DPI</span>
+                            </label>
+                            <div class="btn-group w-100" role="group" aria-label="Độ phân giải DPI">
+                                <input type="radio" class="btn-check" name="resolution-dpi" id="dpi-72" value="72" autocomplete="off">
+                                <label class="btn btn-outline-secondary btn-sm py-1" for="dpi-72" style="font-size: 0.72rem;">72 DPI (Nhanh)</label>
+
+                                <input type="radio" class="btn-check" name="resolution-dpi" id="dpi-150" value="150" checked autocomplete="off">
+                                <label class="btn btn-outline-secondary btn-sm py-1" for="dpi-150" style="font-size: 0.72rem;">150 DPI (Chuẩn)</label>
+
+                                <input type="radio" class="btn-check" name="resolution-dpi" id="dpi-300" value="300" autocomplete="off">
+                                <label class="btn btn-outline-secondary btn-sm py-1" for="dpi-300" style="font-size: 0.72rem;">300 DPI (Sắc nét)</label>
+                            </div>
+                        </div>
+
+                        <div class="form-check form-switch mb-0">
+                            <input class="form-check-input" type="checkbox" role="switch" id="extract-tables-checkbox" checked>
+                            <label class="form-check-label text-slate-700" for="extract-tables-checkbox" style="font-size: 0.75rem;">
+                                Trích xuất bảng Markdown (TSR)
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Confidence Slider -->
+                    <div class="confidence-slider-box">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <label for="confidence-slider" class="text-slate-700 fw-medium mb-0" style="font-size: 0.75rem;">
+                                Ngưỡng hiển thị BBox
+                            </label>
+                            <span id="confidence-value" class="badge bg-indigo-100 text-indigo-700 fw-semibold" style="font-size: 0.72rem;">≥ 0.50</span>
+                        </div>
+                        <input type="range" class="form-range" id="confidence-slider" min="0.50" max="1.00" step="0.05" value="0.50">
+                        <div class="d-flex justify-content-between text-muted" style="font-size: 0.68rem;">
+                            <span>0.50 (Mặc định)</span>
+                            <span>1.00</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 1.3 Action Buttons -->
+                <div class="section-block border-top pt-2.5 d-flex flex-column gap-2">
+                    <button id="run-ocr-btn" class="btn btn-indigo w-100 py-2 d-flex align-items-center justify-content-center gap-2 fw-semibold shadow-sm" disabled>
+                        <span id="run-ocr-spinner" class="spinner-border spinner-border-sm d-none" aria-hidden="true"></span>
+                        <i id="run-ocr-icon" class="bi bi-play-circle-fill"></i>
+                        <span id="run-ocr-text">Chạy nhận dạng OCR</span>
+                    </button>
+
+                    <button id="reset-btn" class="btn btn-outline-slate w-100 py-1.5 d-flex align-items-center justify-content-center gap-1.5" style="font-size: 0.78rem;">
+                        <i class="bi bi-arrow-counterclockwise"></i> Xóa / Làm mới
+                    </button>
+                </div>
+
+                <!-- 1.4 PDF Pages Thumbnail Navigation (Chỉ hiện với PDF nhiều trang) -->
+                <div id="pdf-thumbnails-container" class="section-block border-top pt-2.5 d-none flex-column gap-2">
+                    <label class="form-label-custom d-flex justify-content-between align-items-center mb-1">
+                        <span><i class="bi bi-grid-fill me-1 text-indigo-600"></i> Danh sách trang PDF</span>
+                        <span id="pdf-page-count-badge" class="badge bg-slate-100 text-slate-700" style="font-size: 0.68rem;">0 trang</span>
+                    </label>
+                    <div id="pdf-thumbnails-list" class="thumbnails-grid d-flex flex-column gap-2 overflow-y-auto" style="max-height: 220px;">
+                        <!-- Thumbnail items inserted dynamically by pdf-loader.js -->
+                    </div>
+                </div>
+
             </div>
         </aside>
 
-        <!-- Main Wrapper -->
-        <div class="main-wrapper">
-            <!-- Topbar Header -->
-            <header class="topbar">
-                <div class="topbar-left">
-                    <h2 class="topbar-title">Hệ thống Số hóa tài liệu</h2>
-                </div>
-                <div class="topbar-right">
-                    <span id="api-status" class="status-badge bg-emerald-50 text-emerald-700 border-emerald-200 border">
-                        <span class="pulse-dot bg-emerald-500"></span>
-                        API Ready
-                    </span>
-                </div>
-            </header>
+        <!-- ========================================================================= -->
+        <!-- CỘT 2: TRÌNH XEM TRƯỚC TÀI LIỆU (Document Viewer — 45% / Min 420px)        -->
+        <!-- ========================================================================= -->
+        <section class="column-preview d-flex flex-column h-100 bg-slate-100 border-end position-relative">
+            <!-- 2.1 Viewer Toolbar -->
+            <div class="viewer-toolbar d-flex align-items-center justify-content-between px-3 py-2 bg-white border-bottom flex-shrink-0">
+                <!-- Zoom Controls -->
+                <div class="d-flex align-items-center gap-1">
+                    <div class="btn-group btn-group-sm" role="group" aria-label="Điều khiển phóng to thu nhỏ">
+                        <button id="zoom-out-btn" class="btn btn-outline-slate" title="Thu nhỏ (-)" aria-label="Thu nhỏ">
+                            <i class="bi bi-dash"></i>
+                        </button>
+                        <button id="zoom-reset-btn" class="btn btn-outline-slate fw-semibold px-2" style="font-size: 0.72rem;" title="Đặt lại 100%">
+                            <span id="zoom-ratio-badge">100%</span>
+                        </button>
+                        <button id="zoom-in-btn" class="btn btn-outline-slate" title="Phóng to (+)" aria-label="Phóng to">
+                            <i class="bi bi-plus"></i>
+                        </button>
+                    </div>
 
-            <!-- Content Body -->
-            <main class="content-body">
-                <!-- Page Info -->
-                <section class="page-intro" aria-labelledby="page-title">
-                    <h1 id="page-title" class="text-2xl font-bold tracking-tight text-slate-900">Vietnamese OCR Module</h1>
-                    <p class="text-sm text-slate-500 mt-1">
-                        Tải lên tài liệu PDF hoặc file ảnh để nhận dạng văn bản tiếng Việt. Đối với tệp PDF, hệ thống tự động trích xuất các trang thành ảnh độc lập để chạy suy luận.
+                    <button id="zoom-fit-btn" class="btn btn-sm btn-outline-slate py-1 px-2" style="font-size: 0.75rem;" title="Vừa khung nhìn">
+                        <i class="bi bi-arrows-angle-contract"></i> <span class="d-none d-md-inline">Vừa khung</span>
+                    </button>
+                </div>
+
+                <!-- BBox Toggle & PDF Page Nav -->
+                <div class="d-flex align-items-center gap-2">
+                    <!-- PDF Page Navigation (Ẩn với ảnh đơn) -->
+                    <div id="viewer-pdf-nav" class="d-none align-items-center gap-1">
+                        <button id="prev-page-btn" class="btn btn-sm btn-outline-slate py-0.5 px-1.5" title="Trang trước" disabled>
+                            <i class="bi bi-chevron-left"></i>
+                        </button>
+                        <span id="viewer-page-indicator" class="badge bg-slate-100 text-slate-800 border" style="font-size: 0.72rem;">Trang 1 / 1</span>
+                        <button id="next-page-btn" class="btn btn-sm btn-outline-slate py-0.5 px-1.5" title="Trang sau" disabled>
+                            <i class="bi bi-chevron-right"></i>
+                        </button>
+                    </div>
+
+                    <!-- Toggle BBox Button -->
+                    <button id="toggle-bbox-btn" class="btn btn-sm btn-indigo-light active py-1 px-2 d-flex align-items-center gap-1.5" style="font-size: 0.75rem;" title="Bật/Tắt hiển thị Bounding Box">
+                        <i class="bi bi-bounding-box-circles"></i>
+                        <span class="d-none d-sm-inline">BBox</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 2.2 Interactive Viewport -->
+            <div id="viewport-container" class="viewer-viewport flex-grow-1 position-relative overflow-auto d-flex align-items-center justify-content-center">
+                
+                <!-- Empty State View -->
+                <div id="viewport-empty-state" class="text-center p-4">
+                    <div class="empty-state-icon mx-auto mb-3 bg-white text-slate-400 rounded-circle shadow-sm d-flex align-items-center justify-content-center" style="width: 72px; height: 72px;">
+                        <i class="bi bi-image fs-1"></i>
+                    </div>
+                    <h6 class="fw-bold text-slate-700 mb-1">Chưa có tài liệu nào được chọn</h6>
+                    <p class="text-muted mb-0" style="font-size: 0.8rem; max-width: 320px;">
+                        Kéo thả hình ảnh hoặc tệp PDF vào khung bên trái để bắt đầu xem trước và phân tích OCR.
                     </p>
-                </section>
+                </div>
 
-                <!-- Drag & Drop Zone -->
-                <section id="upload-section" aria-label="Khu vực tải tệp tin">
-                    <div id="drop-zone" tabindex="0" role="button" aria-describedby="upload-instructions">
-                        <!-- Upload Icon -->
-                        <svg fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"></path>
-                        </svg>
-                        <div id="upload-instructions" class="upload-instructions">
-                            <p class="upload-title">Kéo thả tệp tin vào đây, hoặc <span class="upload-link">chọn từ thiết bị</span></p>
-                            <p class="upload-subtitle">Hỗ trợ PDF, JPG, PNG, WEBP, TIFF, BMP · Tối đa 20 MB · Lên đến 10 trang PDF</p>
-                        </div>
-                        <input type="file" id="file-input" class="hidden" accept="application/pdf,image/jpeg,image/png,image/webp,image/tiff,image/bmp,.pdf,.jpg,.jpeg,.png,.webp,.tif,.tiff,.bmp" aria-hidden="true">
-                    </div>
-                </section>
-
-                <!-- OCR Processing Progress Container (Hidden by default) -->
-                <section id="progress-section" class="hidden progress-card bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
-                    <div class="flex items-center justify-between mb-2">
-                        <span id="progress-label" class="text-sm font-semibold text-slate-700">Đang tải tệp tin...</span>
-                        <span id="progress-percent" class="text-sm font-medium text-indigo-600">0%</span>
-                    </div>
-                    <div class="progress-bar-track w-full bg-slate-100 rounded-full h-2">
-                        <div id="progress-bar" class="bg-indigo-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
-                    </div>
-                </section>
-
-                <!-- Result Section (Hidden by default) -->
-                <section id="result-section" class="hidden flex-grow flex flex-col gap-6 min-h-0">
-                    <!-- Toolbar -->
-                    <div class="flex flex-wrap items-center justify-between gap-4 bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
-                        <!-- Page selector (for PDFs) -->
-                        <div class="flex items-center gap-2">
-                            <button id="prev-page" class="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-transparent" aria-label="Trang trước" disabled>
-                                <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" /></svg>
-                            </button>
-                            <span class="text-sm font-medium text-slate-700" id="page-indicator">Trang 1 / 1</span>
-                            <button id="next-page" class="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-transparent" aria-label="Trang tiếp theo" disabled>
-                                <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
-                            </button>
-                        </div>
-                        
-                        <!-- Action Buttons -->
-                        <div class="flex items-center gap-2">
-                            <button id="run-ocr-btn" class="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600 transition">
-                                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                                Chạy OCR
-                            </button>
-                            <button id="copy-text-btn" class="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition">
-                                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>
-                                Sao chép
-                            </button>
-                            <button id="download-txt-btn" class="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition">
-                                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                                Tải xuống .txt
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- Double Column Viewer -->
-                    <div class="ocr-viewer-grid">
-                        <!-- Left: Bounding Box Overlay Image Viewer -->
-                        <div class="ocr-card">
-                            <div class="ocr-card-header">
-                                <span class="ocr-card-title">Hình ảnh gốc / Bố cục</span>
-                                <div class="flex items-center gap-1.5">
-                                    <span class="h-2 w-2 rounded-full bg-indigo-500"></span>
-                                    <span class="text-xs text-slate-600 font-medium">Bản vẽ Bounding Box</span>
-                                </div>
-                            </div>
-                            <div class="ocr-viewport" id="viewport-container">
-                                <div class="relative inline-block" id="image-wrapper">
-                                    <img id="preview-image" alt="Xem trước tài liệu">
-                                    <div id="bbox-overlay" class="absolute inset-0 pointer-events-auto"></div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Right: Extracted Text Editor/Markdown View -->
-                        <div class="ocr-card">
-                            <div class="ocr-card-header">
-                                <span class="ocr-card-title">Kết quả trích xuất</span>
-                                <span class="text-xs font-medium text-slate-400" id="confidence-indicator">Độ chính xác: --</span>
-                            </div>
-                            <div class="ocr-editor-container">
-                                <textarea id="output-textarea" class="ocr-textarea" placeholder="Kết quả chữ nhận diện sẽ hiển thị ở đây sau khi chạy OCR..." readonly></textarea>
-                            </div>
-                        </div>
-                    </div>
-                </section>
-            </main>
-
-            <!-- Footer -->
-            <footer class="footer">
-                <div class="footer-content">
-                    <span>&copy; 2026 Vietnamese OCR Project. Bảo lưu mọi quyền.</span>
-                    <div class="flex gap-4">
-                        <a href="#" class="hover:text-indigo-600 transition">Tài liệu API</a>
-                        <a href="#" class="hover:text-indigo-600 transition">Hướng dẫn sử dụng</a>
+                <!-- Pan & Zoom Canvas Wrapper -->
+                <div id="pan-zoom-container" class="pan-zoom-stage d-none position-relative">
+                    <div id="image-wrapper" class="image-render-wrapper position-relative">
+                        <!-- Preview Image Element -->
+                        <img id="preview-image" alt="Xem trước tài liệu OCR" class="d-block shadow-sm">
+                        <!-- Canvas Element for PDF Rendering -->
+                        <canvas id="pdf-render-canvas" class="d-none shadow-sm"></canvas>
+                        <!-- SVG / Canvas BBox Overlay Layer -->
+                        <div id="bbox-overlay" class="bbox-overlay-layer position-absolute top-0 start-0 w-100 h-100 pointer-events-auto"></div>
                     </div>
                 </div>
-            </footer>
-        </div>
-    </div>
 
-    <!-- Scripts -->
-    <script src="app.js"></script>
+                <!-- Hover Floating Tooltip for BBox -->
+                <div id="bbox-tooltip" class="bbox-floating-tooltip position-absolute d-none p-2 rounded-2 shadow-lg bg-slate-900 text-white" style="z-index: 1050; font-size: 0.75rem; pointer-events: none;">
+                    <div class="d-flex align-items-center justify-content-between gap-2 mb-0.5">
+                        <span class="badge bg-indigo-500 text-white" id="tooltip-type">Text</span>
+                        <span class="text-emerald-400 fw-semibold" id="tooltip-score">99.4%</span>
+                    </div>
+                    <div id="tooltip-text" class="text-slate-200 text-truncate" style="max-width: 240px;">Nội dung văn bản...</div>
+                </div>
+
+            </div>
+
+            <!-- 2.3 Viewer Status Footer -->
+            <div class="viewer-footer px-3 py-1.5 bg-white border-top d-flex justify-content-between align-items-center text-muted" style="font-size: 0.72rem;">
+                <span id="viewer-file-dim">Kích thước: -- × -- px</span>
+                <span id="viewer-status-text">Sẵn sàng</span>
+            </div>
+        </section>
+
+        <!-- ========================================================================= -->
+        <!-- CỘT 3: KẾT QUẢ VĂN BẢN (OCR & Markdown Results — 30% / Min 320px)           -->
+        <!-- ========================================================================= -->
+        <section class="column-results d-flex flex-column h-100 bg-white shadow-sm">
+            
+            <!-- 3.1 Metrics Overview Header -->
+            <div class="metrics-header p-3 border-bottom flex-shrink-0">
+                <div class="row g-2">
+                    <div class="col-4">
+                        <div class="metric-card p-2 rounded-2 border bg-slate-50 text-center">
+                            <span class="text-muted d-block" style="font-size: 0.68rem;"><i class="bi bi-stopwatch"></i> Thời gian</span>
+                            <span id="metric-time" class="fw-bold text-slate-800" style="font-size: 0.9rem;">-- ms</span>
+                        </div>
+                    </div>
+                    <div class="col-4">
+                        <div class="metric-card p-2 rounded-2 border bg-slate-50 text-center">
+                            <span class="text-muted d-block" style="font-size: 0.68rem;"><i class="bi bi-card-text"></i> Số dòng</span>
+                            <span id="metric-lines" class="fw-bold text-slate-800" style="font-size: 0.9rem;">--</span>
+                        </div>
+                    </div>
+                    <div class="col-4">
+                        <div class="metric-card p-2 rounded-2 border bg-slate-50 text-center">
+                            <span class="text-muted d-block" style="font-size: 0.68rem;"><i class="bi bi-shield-check"></i> Độ tin cậy TB</span>
+                            <span id="metric-confidence" class="fw-bold text-slate-800" style="font-size: 0.9rem;">--%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3.2 Result View Tabs (Accessibility with aria-live) -->
+            <div class="results-tab-bar border-bottom px-3 pt-2 bg-slate-50 flex-shrink-0">
+                <ul class="nav nav-tabs border-bottom-0 gap-1" id="resultTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active py-1.5 px-2.5 fw-semibold" style="font-size: 0.78rem;" id="tab-markdown" data-bs-toggle="tab" data-bs-target="#pane-markdown" type="button" role="tab" aria-controls="pane-markdown" aria-selected="true">
+                            <i class="bi bi-markdown me-1"></i> Văn bản / Markdown
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link py-1.5 px-2.5 fw-semibold" style="font-size: 0.78rem;" id="tab-lines" data-bs-toggle="tab" data-bs-target="#pane-lines" type="button" role="tab" aria-controls="pane-lines" aria-selected="false">
+                            <i class="bi bi-list-ol me-1"></i> Từng dòng
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link py-1.5 px-2.5 fw-semibold" style="font-size: 0.78rem;" id="tab-json" data-bs-toggle="tab" data-bs-target="#pane-json" type="button" role="tab" aria-controls="pane-json" aria-selected="false">
+                            <i class="bi bi-braces me-1"></i> JSON
+                        </button>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Tab Content Container with Live Region for Accessibility -->
+            <div class="tab-content flex-grow-1 overflow-hidden position-relative" id="resultTabsContent" aria-live="polite" aria-atomic="false">
+                
+                <!-- Tab 1: Full Markdown / Raw Text -->
+                <div class="tab-pane fade show active h-100 p-3 overflow-y-auto" id="pane-markdown" role="tabpanel" aria-labelledby="tab-markdown" tabindex="0">
+                    <div id="markdown-empty-state" class="text-center py-5 text-muted">
+                        <i class="bi bi-file-earmark-text fs-2 d-block mb-2 text-slate-300"></i>
+                        <p class="mb-0" style="font-size: 0.8rem;">Kết quả trích xuất văn bản sẽ xuất hiện tại đây sau khi chạy OCR.</p>
+                    </div>
+                    <textarea id="output-markdown-textarea" class="form-control font-monospace d-none h-100 border-0 bg-transparent p-0 text-slate-800" style="font-size: 0.82rem; line-height: 1.6; resize: none;" readonly placeholder="Kết quả trích xuất..."></textarea>
+                </div>
+
+                <!-- Tab 2: Line Details (List with Scores) -->
+                <div class="tab-pane fade h-100 p-3 overflow-y-auto d-flex flex-column gap-2" id="pane-lines" role="tabpanel" aria-labelledby="tab-lines" tabindex="0">
+                    <div class="data-integrity-notice alert alert-light border py-1.5 px-2 mb-2 d-flex align-items-center gap-1.5 text-muted" style="font-size: 0.72rem;">
+                        <i class="bi bi-info-circle text-indigo-600 flex-shrink-0"></i>
+                        <span>Danh sách dòng OCR thô. Rê chuột vào từng dòng để đối chiếu BBox tương ứng ở Cột 2.</span>
+                    </div>
+
+                    <div id="lines-empty-state" class="text-center py-5 text-muted">
+                        <i class="bi bi-list-check fs-2 d-block mb-2 text-slate-300"></i>
+                        <p class="mb-0" style="font-size: 0.8rem;">Chưa có dữ liệu dòng.</p>
+                    </div>
+
+                    <div id="lines-list-container" class="d-flex flex-column gap-1.5 flex-grow-1">
+                        <!-- Line card items injected by app.js -->
+                    </div>
+                </div>
+
+                <!-- Tab 3: Raw JSON Response -->
+                <div class="tab-pane fade h-100 p-3 overflow-y-auto" id="pane-json" role="tabpanel" aria-labelledby="tab-json" tabindex="0">
+                    <div id="json-empty-state" class="text-center py-5 text-muted">
+                        <i class="bi bi-code-square fs-2 d-block mb-2 text-slate-300"></i>
+                        <p class="mb-0" style="font-size: 0.8rem;">Chưa có phản hồi JSON.</p>
+                    </div>
+                    <pre id="output-json-view" class="font-monospace text-slate-800 d-none m-0 h-100" style="font-size: 0.75rem; white-space: pre-wrap; word-break: break-word;"><code></code></pre>
+                </div>
+
+            </div>
+
+            <!-- 3.3 Export Toolbar Footer -->
+            <div class="export-toolbar p-2.5 border-top bg-slate-50 d-flex align-items-center justify-content-between gap-2 flex-shrink-0">
+                <button id="copy-text-btn" class="btn btn-sm btn-outline-slate flex-grow-1 d-flex align-items-center justify-content-center gap-1.5 py-1.5" style="font-size: 0.78rem;" title="Sao chép nội dung vào Clipboard" disabled>
+                    <i class="bi bi-clipboard"></i> <span>Sao chép</span>
+                </button>
+
+                <div class="btn-group flex-grow-1" role="group">
+                    <button id="download-txt-btn" class="btn btn-sm btn-outline-slate d-flex align-items-center justify-content-center gap-1 py-1.5" style="font-size: 0.78rem;" title="Tải xuống tệp .TXT hoặc .MD" disabled>
+                        <i class="bi bi-download"></i> <span>Tải .TXT</span>
+                    </button>
+                    <button id="download-json-btn" class="btn btn-sm btn-outline-slate d-flex align-items-center justify-content-center gap-1 py-1.5" style="font-size: 0.78rem;" title="Tải xuống tệp .JSON" disabled>
+                        <i class="bi bi-filetype-json"></i> <span>.JSON</span>
+                    </button>
+                </div>
+            </div>
+
+        </section>
+
+    </main>
+
+    <!-- Global Toast Container -->
+    <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toast-container" style="z-index: 1090;"></div>
+
+    <!-- Scripts (Modular JavaScript ES6 & Bootstrap Bundle) -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+    <script type="module" src="js/app.js"></script>
 </body>
 </html>

@@ -36,7 +36,7 @@
 
 ### 2. Strategic Skill Utilization
 
-- Leverage specialized workspace skills (e.g., templates inside `.agents/skills/` or commands like `/spec-gen`) to generate structured Markdown blocks for PRDs, User Stories, or System Architecture components.
+- Leverage specialized workspace skills (e.g., templates inside `.agents/skills/` or commands like) to generate structured Markdown blocks for PRDs, User Stories, or System Architecture components.
 - Rely on automated hooks (`/hooks`) primarily for document layout validation or links checking if available.
 
 ### 3. Lightweight Evolution Loop
