@@ -69,6 +69,7 @@ async def extract_document(
 
 @router.post(
     "/document/smart-extract",
+    response_model=DocumentExtractionResponse,
     summary="Smart Document Extraction with Automatic Fast-Path Fallback",
     description=(
         "Analyzes document with SmartPDFInspector. If digital, extracts directly with high speed (<50ms/page). "
@@ -77,6 +78,7 @@ async def extract_document(
 )
 @router.post(
     "/extract/smart-document",
+    response_model=DocumentExtractionResponse,
     summary="Alias for Smart Document Extraction",
     include_in_schema=True,
 )
@@ -108,15 +110,12 @@ async def smart_extract_document(
         try:
             async with asyncio.timeout(120.0):
                 await file.seek(0)
-                response, metadata = await asyncio.to_thread(
+                return await asyncio.to_thread(
                     dispatcher.dispatch,
                     file_input=file.file,
                     extract_tables=extract_tables,
                     resolution=resolution,
                 )
-                res_dict = response.model_dump()
-                res_dict["metadata"] = metadata
-                return res_dict
         except TimeoutError:
             return JSONResponse(
                 status_code=504,

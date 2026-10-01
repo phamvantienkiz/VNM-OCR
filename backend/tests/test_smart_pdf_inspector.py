@@ -43,15 +43,15 @@ def test_dispatcher_with_image():
     """Verify dispatcher processes image files directly."""
     models_dir = Path(__file__).resolve().parents[1] / "models"
     mgr = get_engine_manager(models_dir=models_dir)
-    doc_svc = DocumentService(engine_manager=mgr)
-    dispatcher = UniversalDocumentDispatcher(document_service=doc_svc)
+    dispatcher = UniversalDocumentDispatcher(engine_manager=mgr)
 
     pil_img = Image.new("RGB", (64, 64), color=(200, 200, 200))
     buf = io.BytesIO()
     pil_img.save(buf, format="PNG")
     buf.seek(0)
 
-    resp, meta = dispatcher.dispatch(buf)
+    resp = dispatcher.dispatch(buf)
     assert resp.total_pages == 1
-    assert meta["is_pdf"] is False
-    assert meta["pipeline_used"] == "heavy_onnx_pipeline"
+    assert resp.metadata is not None
+    assert resp.metadata.pipeline_used == "vnm_ocr"
+
