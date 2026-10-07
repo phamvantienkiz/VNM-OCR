@@ -115,6 +115,7 @@ async def smart_extract_document(
                     file_input=file.file,
                     extract_tables=extract_tables,
                     resolution=resolution,
+                    filename=file.filename,
                 )
         except TimeoutError:
             return JSONResponse(

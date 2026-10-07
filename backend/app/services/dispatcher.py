@@ -13,6 +13,7 @@ from app.services.inspector import SmartPDFInspector, PageType
 from app.services.extractors.base import BaseExtractor
 from app.services.extractors.native import NativePDFExtractor
 from app.services.extractors.vnm import VNMOCRExtractor
+from app.services.extractors.docling import DoclingUniversalExtractor
 from app.schemas.document import DocumentExtractionResponse, ExtractionMetadata
 from app.utils.image_utils import is_pdf_file
 
@@ -32,6 +33,7 @@ class UniversalDocumentDispatcher:
         self._engine_manager = engine_manager
         self._native_extractor = NativePDFExtractor()
         self._vnm_extractor = VNMOCRExtractor(engine_manager=engine_manager)
+        self._docling_extractor = DoclingUniversalExtractor()
 
     def _select_extractor(
         self, classification: PageType
@@ -50,8 +52,20 @@ class UniversalDocumentDispatcher:
         file_input: BinaryIO | bytes,
         extract_tables: bool = True,
         resolution: int = 150,
+        filename: str | None = None,
+        **kwargs: Any,
     ) -> DocumentExtractionResponse:
         """Classify → select extractor → execute → return response with metadata."""
+        # 0. Route Office formats directly
+        if filename:
+            ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+            if ext in self._docling_extractor.supported_extensions:
+                return self._docling_extractor.extract(
+                    file_input,
+                    extract_tables=extract_tables,
+                    filename=filename,
+                    **kwargs,
+                )
         # Detect PDF
         is_pdf = False
         if hasattr(file_input, "read"):

@@ -60,16 +60,21 @@ class SmartPDFInspector:
     @classmethod
     def analyze_page(cls, page: pdfplumber.page.Page, page_num: int = 1) -> PDFPageProfile:
         """Inspect a single pdfplumber Page object and compute its structural profile."""
-        text = page.extract_text() or ""
-        char_count = len(text.strip())
-        images = page.images or []
-        raster_count = len(images)
-
-        # 1. Check for Corrupted Vector / Broken Fonts (PUA characters or unreadable gibberish)
-        pua_matches = len(cls.PUA_REGEX.findall(text))
-        is_corrupted = False
-        if pua_matches > 5 or (char_count > 50 and pua_matches / char_count > 0.1):
+        try:
+            text = page.extract_text() or ""
+            pua_matches = len(cls.PUA_REGEX.findall(text))
+            is_corrupted = pua_matches > 5 or (len(text.strip()) > 50 and pua_matches / len(text.strip()) > 0.1)
+        except Exception:
+            text = ""
+            pua_matches = 999
             is_corrupted = True
+
+        char_count = len(text.strip())
+        try:
+            images = page.images or []
+        except Exception:
+            images = []
+        raster_count = len(images)
 
         # 2. Compute Scanned Content Score (SCS)
         # Factors: presence of full-page raster image vs digital text density
@@ -88,7 +93,10 @@ class SmartPDFInspector:
         has_math = bool(cls.MATH_UNICODE_REGEX.search(text))
 
         # 4. Detect Complex Tables
-        tables = page.extract_tables() or []
+        try:
+            tables = page.extract_tables() or []
+        except Exception:
+            tables = []
         has_complex_tables = len(tables) > 0
 
         # Classify PageType

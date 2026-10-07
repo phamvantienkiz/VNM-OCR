@@ -19,12 +19,14 @@ def _create_sample_png() -> bytes:
 
 def test_extract_docling_unavailable_returns_501():
     """Verify calling /extract/docling returns 501 when optional docling is not installed."""
-    response = client.post(
-        "/api/v1/extract/docling",
-        files={"file": ("test.docx", b"dummy docx content", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
-    )
-    assert response.status_code == 501
-    assert "DoclingUniversalExtractor" in response.json()["detail"]
+    from unittest.mock import patch
+    with patch("app.services.extractors.docling._check_docling_available", return_value=False):
+        response = client.post(
+            "/api/v1/extract/docling",
+            files={"file": ("test.docx", b"dummy docx content", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+        )
+        assert response.status_code == 501
+        assert "DoclingUniversalExtractor" in response.json()["detail"]
 
 
 def test_extract_paddle_ocr_unavailable_returns_501():

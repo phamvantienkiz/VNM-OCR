@@ -39,12 +39,14 @@ def test_base_extractor_attributes():
 
 
 def test_docling_not_available_raises():
+    from unittest.mock import patch
     docling = DoclingUniversalExtractor()
     # In test environment without docling installed, calling extract should raise ExtractorNotAvailableError
-    with pytest.raises(ExtractorNotAvailableError) as exc_info:
-        docling.extract(b"dummy docx bytes", filename="test.docx")
-    assert exc_info.value.status_code == 501
-    assert "DoclingUniversalExtractor" in exc_info.value.message
+    with patch("app.services.extractors.docling._check_docling_available", return_value=False):
+        with pytest.raises(ExtractorNotAvailableError) as exc_info:
+            docling.extract(b"dummy docx bytes", filename="test.docx")
+        assert exc_info.value.status_code == 501
+        assert "DoclingUniversalExtractor" in exc_info.value.message
 
 
 def test_paddle_not_available_raises():
