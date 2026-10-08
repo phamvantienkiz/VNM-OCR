@@ -117,7 +117,14 @@ class NormalizeImage:
         order: str = "hwc",
         **kwargs: Any,
     ) -> None:
-        self.scale = eval(scale) if isinstance(scale, str) else float(scale)
+        if isinstance(scale, str):
+            if "/" in scale:
+                parts = scale.replace(" ", "").split("/")
+                self.scale = float(parts[0]) / float(parts[1])
+            else:
+                self.scale = float(scale)
+        else:
+            self.scale = float(scale)
         self.mean = np.array(mean if mean is not None else [0.485, 0.456, 0.406], dtype=np.float32)
         self.std = np.array(std if std is not None else [0.229, 0.224, 0.225], dtype=np.float32)
         self.order = order

@@ -372,6 +372,7 @@ class OcrEngine:
         ori_im = img.copy()
         dt_boxes, _ = self.detector(ori_im)
         if not dt_boxes:
+            del ori_im
             return []
 
         sorted_dt_boxes = self.sorted_boxes(dt_boxes)
@@ -380,7 +381,14 @@ class OcrEngine:
             crop = self.get_rotate_crop_image(ori_im, box)
             img_crop_list.append(crop)
 
+        # Giải phóng ori_im ngay lập tức sau khi đã cắt xong các crop
+        del ori_im
+
         rec_res, _ = self.recognizer(img_crop_list)
+
+        # Giải phóng tường minh các mảng crop sau khi recognition xong
+        img_crop_list.clear()
+        del img_crop_list
 
         results = []
         for box, (text, score) in zip(sorted_dt_boxes, rec_res):

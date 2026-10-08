@@ -37,6 +37,11 @@ tools = [
     "torch>=2.1.0",
     "torchvision>=0.16.0",
 ]
+extractors = [
+    "docling>=2.0.0",
+    "paddleocr>=2.8.0",
+    "paddlex>=3.0.0",
+]
 
 [build-system]
 requires = ["setuptools>=68.0"]

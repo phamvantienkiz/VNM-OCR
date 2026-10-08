@@ -17,6 +17,26 @@ class DocumentPageResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ExtractionMetadata(BaseModel):
+    """Routing and pipeline metadata attached to extraction responses."""
+
+    pipeline_used: str = Field(..., description="Name of the extractor that processed the document")
+    requires_image_input: bool = Field(
+        default=False,
+        description="Whether the engine required rendering pages to images (OCR pipelines)",
+    )
+    is_vector_recovery: bool = Field(
+        default=False,
+        description="Whether a digital PDF with broken fonts had to be rasterized and OCR'd",
+    )
+    classification: str | None = Field(
+        default=None,
+        description="SmartPDFInspector classification (DIGITAL_DOCUMENT, SCANNED_DOCUMENT, etc.)",
+    )
+
+    model_config = ConfigDict(extra="allow")
+
+
 class DocumentExtractionResponse(BaseModel):
     """Full Document Extraction Response containing unified Markdown for RAG Pipelines."""
 
@@ -24,5 +44,9 @@ class DocumentExtractionResponse(BaseModel):
     full_markdown: str = Field(..., description="Unified structured Markdown text for RAG chunking")
     pages: list[DocumentPageResult] = Field(default_factory=list, description="Per-page breakdown")
     elapsed_ms: float = Field(..., description="Total execution duration in milliseconds")
+    metadata: ExtractionMetadata | None = Field(
+        default=None,
+        description="Routing metadata: which pipeline was used, classification results, etc.",
+    )
 
     model_config = ConfigDict(extra="forbid")

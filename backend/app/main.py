@@ -4,6 +4,7 @@
 import os
 import sys
 import tempfile
+import asyncio
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -24,10 +25,9 @@ import cv2
 cv2.setNumThreads(2)
 
 from contextlib import asynccontextmanager
-from pathlib import Path
-from typing import Any, AsyncGenerator
+from typing import AsyncGenerator
 import logging
-from fastapi import FastAPI, Depends, File, UploadFile, HTTPException, status
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
@@ -35,11 +35,11 @@ from fastapi.responses import RedirectResponse
 from app.core.config import settings
 from app.core.logging import setup_logging
 from app.api.v1.router import api_router
-from app.api.deps import get_ocr_service
-from app.services.ocr_service import OcrService
+from app.api.v1.endpoints.ocr import legacy_router
 from app.engine.manager import get_engine_manager
 from app.engine.model_loader import clear_session_cache
 from app.exceptions.handlers import register_exception_handlers
+from app.middlewares import register_middlewares
 
 logger = logging.getLogger("app.main")
 
@@ -49,6 +49,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan manager for startup warmup and graceful shutdown."""
     setup_logging()
     logger.info("Starting up %s (env=%s)...", settings.APP_NAME, settings.ENVIRONMENT)
+
+    # Khởi tạo Semaphore khống chế 1 tác vụ tính toán OCR tại một thời điểm
+    app.state.ocr_semaphore = asyncio.Semaphore(1)
 
     # Initialize EngineManager and warmup models
     try:
@@ -76,6 +79,9 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_PREFIX}/openapi.json",
 )
 
+# Setup Middlewares (UploadGuard, Backpressure, Chunked Stream Guard)
+register_middlewares(app)
+
 # Setup CORS
 app.add_middleware(
     CORSMiddleware,
@@ -88,29 +94,9 @@ app.add_middleware(
 # Register Custom Exception Handlers
 register_exception_handlers(app)
 
-# Include v1 API Router
+# Include v1 API Router and Legacy UI Adapter Router
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
-
-
-# Legacy Adapter Endpoint for Existing Web UI Compatibility
-@app.post(
-    "/api/ocr",
-    tags=["Legacy UI Adapter"],
-    summary="Legacy OCR endpoint for UI compatibility",
-    description="Returns nested list format [[[x1, y1], ...], [text, score]] matching existing demo UI.",
-)
-async def legacy_ocr_endpoint(
-    file: UploadFile = File(...),
-    service: OcrService = Depends(get_ocr_service),
-) -> list[list[Any]]:
-    """Legacy OCR endpoint matching original server.py response format."""
-    if not file.filename:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No file provided")
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty")
-    return service.process_image_legacy(content)
-
+app.include_router(legacy_router)
 
 # Static UI Mount (if ui directory exists)
 ui_path = Path(__file__).resolve().parents[2] / "ui"
